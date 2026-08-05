@@ -7,6 +7,7 @@ dependencies = [
   "cryptography>=45,<47",
   "fastapi>=0.115,<0.116",
   "psycopg[binary]>=3.2,<4",
+  "redis>=6,<7",
   "uvicorn[standard]>=0.30,<1",
 ]
 

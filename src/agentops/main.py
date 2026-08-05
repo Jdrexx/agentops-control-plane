@@ -21,6 +21,7 @@ from .schemas import (
     MemoryCreate,
     ProjectCreate,
     ProjectImport,
+    ProjectMemberCreate,
     RunCreate,
     ScheduleCreate,
     SecretCreate,
@@ -60,17 +61,17 @@ def create_app(database_path: str | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def security_boundary(request: Request, call_next):
-        public = (
-            request.url.path in {"/", "/api/health", "/api/ready", "/api/auth/status"}
-            or request.url.path.startswith("/static/")
-        )
+        public = request.url.path in {
+            "/",
+            "/api/health",
+            "/api/ready",
+            "/api/auth/status",
+        } or request.url.path.startswith("/static/")
         actor = Actor("local-user", "admin")
         if not public and authenticator.enabled():
             authorization = request.headers.get("Authorization", "")
             token = (
-                authorization.removeprefix("Bearer ")
-                if authorization.startswith("Bearer ")
-                else ""
+                authorization.removeprefix("Bearer ") if authorization.startswith("Bearer ") else ""
             )
             authenticated = authenticator.authenticate(token) if token else None
             if authenticated is None:
@@ -80,7 +81,9 @@ def create_app(database_path: str | None = None) -> FastAPI:
             request.state.actor = actor
             if request.method not in {"GET", "HEAD", "OPTIONS"} and actor.role == "viewer":
                 return JSONResponse({"detail": "viewer role is read-only"}, status_code=403)
-            admin_path = request.url.path.startswith(("/api/users", "/api/secrets", "/api/audit"))
+            admin_path = request.url.path.startswith(
+                ("/api/users", "/api/secrets", "/api/audit", "/api/project-members")
+            )
             if admin_path and actor.role != "admin":
                 return JSONResponse({"detail": "admin role required"}, status_code=403)
             timestamp = time.monotonic()
@@ -89,9 +92,7 @@ def create_app(database_path: str | None = None) -> FastAPI:
                 while bucket and bucket[0] < timestamp - 60:
                     bucket.popleft()
                 if len(bucket) >= 240:
-                    return JSONResponse(
-                        {"detail": "request rate limit exceeded"}, status_code=429
-                    )
+                    return JSONResponse({"detail": "request rate limit exceeded"}, status_code=429)
                 bucket.append(timestamp)
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -145,10 +146,12 @@ def create_app(database_path: str | None = None) -> FastAPI:
 
     @app.get("/api/projects/{project_id}")
     def project(project_id: int, request: Request):
+        require_project_access(request, project_id)
         return service(request).get_project(project_id)
 
     @app.get("/api/projects/{project_id}/export")
     def export_project(project_id: int, request: Request):
+        require_project_access(request, project_id)
         return service(request).export_project(project_id)
 
     @app.post("/api/projects/import", status_code=201)
@@ -157,16 +160,20 @@ def create_app(database_path: str | None = None) -> FastAPI:
 
     @app.post("/api/workflows", status_code=201)
     def create_workflow(body: WorkflowCreate, request: Request):
+        require_project_access(request, body.project_id, write=True)
         return service(request).create_workflow(
             body.project_id, body.name, [step.model_dump() for step in body.steps]
         )
 
     @app.get("/api/workflows")
     def workflows(request: Request, project_id: int | None = None):
+        if project_id is not None:
+            require_project_access(request, project_id)
         return service(request).list_workflows(project_id)
 
     @app.get("/api/workflows/{workflow_id}")
     def workflow(workflow_id: int, request: Request):
+        require_workflow_access(request, workflow_id)
         return service(request).get_workflow(workflow_id)
 
     @app.get("/api/tools")
@@ -222,12 +229,22 @@ def create_app(database_path: str | None = None) -> FastAPI:
             },
         ]
 
+    @app.get("/api/templates")
+    def templates(request: Request):
+        return service(request).list_templates()
+
+    @app.post("/api/templates/{template_id}", status_code=201)
+    def create_from_template(template_id: str, project_id: int, request: Request):
+        require_project_access(request, project_id, write=True)
+        return service(request).create_from_template(template_id, project_id)
+
     @app.get("/api/providers")
     def providers(request: Request):
         return service(request).providers.status()
 
     @app.post("/api/workflows/{workflow_id}/runs", status_code=201)
     def start_run(workflow_id: int, body: RunCreate, request: Request):
+        require_workflow_access(request, workflow_id, write=True)
         return service(request).start_run(
             workflow_id,
             body.input,
@@ -369,6 +386,7 @@ def create_app(database_path: str | None = None) -> FastAPI:
                         "stats": current_service.stats(),
                         "runs": current_service.list_runs(limit=20),
                         "alerts": current_service.list_alerts(),
+                        "events": current_service.list_agent_events(limit=100),
                     }
                 )
                 await asyncio.sleep(1)
@@ -393,12 +411,12 @@ def create_app(database_path: str | None = None) -> FastAPI:
 
     @app.put("/api/memories")
     def put_memory(body: MemoryCreate, request: Request):
-        return service(request).put_memory(
-            body.project_id, body.namespace, body.key, body.value
-        )
+        require_project_access(request, body.project_id, write=True)
+        return service(request).put_memory(body.project_id, body.namespace, body.key, body.value)
 
     @app.get("/api/memories")
     def memories(project_id: int, request: Request):
+        require_project_access(request, project_id)
         return service(request).list_memories(project_id)
 
     @app.post("/api/users", status_code=201)
@@ -409,12 +427,22 @@ def create_app(database_path: str | None = None) -> FastAPI:
     def users(request: Request):
         return service(request).list_users()
 
+    @app.put("/api/project-members", status_code=201)
+    def put_project_member(body: ProjectMemberCreate, request: Request):
+        return service(request).put_project_member(body.project_id, body.user_name, body.role)
+
+    @app.get("/api/project-members")
+    def project_members(project_id: int, request: Request):
+        return service(request).list_project_members(project_id)
+
     @app.put("/api/secrets", status_code=201)
     def put_secret(body: SecretCreate, request: Request):
+        require_project_access(request, body.project_id, write=True)
         return service(request).put_secret(body.project_id, body.name, body.value)
 
     @app.get("/api/secrets")
     def secrets(request: Request, project_id: int):
+        require_project_access(request, project_id)
         return service(request).list_secrets(project_id)
 
     @app.get("/api/secrets/{secret_id}/reveal")
@@ -430,6 +458,22 @@ def create_app(database_path: str | None = None) -> FastAPI:
 
 def service(request: Request) -> AgentOpsService:
     return request.app.state.service
+
+
+def require_project_access(request: Request, project_id: int, write: bool = False) -> None:
+    actor: Actor = request.state.actor
+    if actor.role == "admin":
+        return
+    role = service(request).project_role(project_id, actor.name)
+    if role is None:
+        raise HTTPException(status_code=403, detail="project membership required")
+    if write and role == "viewer":
+        raise HTTPException(status_code=403, detail="project membership is read-only")
+
+
+def require_workflow_access(request: Request, workflow_id: int, write: bool = False) -> None:
+    workflow = service(request).get_workflow(workflow_id)
+    require_project_access(request, workflow["project_id"], write)
 
 
 def _error(status_code: int, message: str):

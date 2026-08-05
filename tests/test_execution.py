@@ -62,6 +62,13 @@ def test_queued_run_can_be_cancelled(client: TestClient, project: dict):
     assert wait_for_status(client, queued["id"], {"cancelled"})["status"] == "cancelled"
 
 
+def test_completed_queue_job_cannot_be_claimed_twice(client: TestClient, project: dict):
+    workflow = create_workflow(client, project["id"], [{"name": "Once", "tool": "input"}])
+    run = client.post(f"/api/workflows/{workflow['id']}/runs", json={"input": "once"}).json()
+    client.app.state.service._execute_queued(run["id"])
+    assert len(client.get(f"/api/runs/{run['id']}").json()["spans"]) == 1
+
+
 def test_schedule_dispatch_and_webhook_delivery(client: TestClient, project: dict):
     workflow = create_workflow(client, project["id"], [{"name": "Pass", "tool": "input"}])
     schedule = client.post(

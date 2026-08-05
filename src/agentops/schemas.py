@@ -101,6 +101,12 @@ class UserCreate(BaseModel):
     role: Literal["admin", "operator", "viewer"]
 
 
+class ProjectMemberCreate(BaseModel):
+    project_id: int = Field(gt=0)
+    user_name: str = Field(min_length=1, max_length=100)
+    role: Literal["operator", "viewer"]
+
+
 class SecretCreate(BaseModel):
     project_id: int = Field(gt=0)
     name: str = Field(min_length=1, max_length=100)

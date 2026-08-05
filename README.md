@@ -14,6 +14,9 @@ A local-first control plane for building, running, approving, evaluating, and ob
 - Encrypted project secrets, trace redaction, rate limits, secure headers, and audit events
 - Live WebSocket updates, token/cost metrics, alerts, and OTLP JSON export
 - Agent handoffs, parent/child trees, project memory, step budgets, and loop detection
+- Durable Redis-backed run queues with atomic PostgreSQL claims and local fallback
+- Streamed Ollama, OpenAI, and Anthropic output over the live dashboard channel
+- Starter workflow templates and project-level team membership roles
 - SQLite or PostgreSQL persistence, Docker, Compose, Railway, and project import/export
 
 ## Local development

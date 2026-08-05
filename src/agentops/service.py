@@ -20,7 +20,9 @@ import psycopg
 from .database import Database
 from .notifications import Notifier
 from .providers import ProviderRegistry
+from .queue import RunQueue
 from .security import SecretVault, redact, token_hash
+from .templates import WORKFLOW_TEMPLATES
 
 
 class NotFoundError(Exception):
@@ -49,7 +51,7 @@ class AgentOpsService:
         self.providers = providers or ProviderRegistry()
         self.vault = SecretVault()
         self.notifier = Notifier()
-        self.executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="agentops-run")
+        self.run_queue = RunQueue(self._execute_queued)
         self.tool_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="agentops-tool")
         self._scheduler_stop = threading.Event()
         self._scheduler_thread: threading.Thread | None = None
@@ -58,7 +60,7 @@ class AgentOpsService:
         self._scheduler_stop.set()
         if self._scheduler_thread is not None:
             self._scheduler_thread.join(timeout=2)
-        self.executor.shutdown(wait=True, cancel_futures=False)
+        self.run_queue.close()
         self.tool_executor.shutdown(wait=False, cancel_futures=True)
 
     def start_scheduler(self) -> None:
@@ -82,11 +84,9 @@ class AgentOpsService:
             rows = connection.execute(
                 "SELECT id FROM runs WHERE status IN ('queued','running')"
             ).fetchall()
-            connection.execute(
-                "UPDATE runs SET status='queued' WHERE status='running'"
-            )
+            connection.execute("UPDATE runs SET status='queued' WHERE status='running'")
         for row in rows:
-            self.executor.submit(self._execute, row["id"])
+            self.run_queue.submit(row["id"])
         return len(rows)
 
     def create_project(self, name: str, description: str) -> dict[str, Any]:
@@ -159,6 +159,15 @@ class AgentOpsService:
             results.append(item)
         return results
 
+    def list_templates(self) -> list[dict[str, Any]]:
+        return WORKFLOW_TEMPLATES
+
+    def create_from_template(self, template_id: str, project_id: int) -> dict[str, Any]:
+        template = next((item for item in WORKFLOW_TEMPLATES if item["id"] == template_id), None)
+        if template is None:
+            raise NotFoundError("workflow template not found")
+        return self.create_workflow(project_id, template["name"], template["steps"])
+
     def start_run(
         self,
         workflow_id: int,
@@ -191,7 +200,7 @@ class AgentOpsService:
             )
             run_id = int(cursor.lastrowid)
         if queued:
-            self.executor.submit(self._execute, run_id)
+            self.run_queue.submit(run_id)
         else:
             self._execute(run_id)
         return self.get_run(run_id)
@@ -249,7 +258,20 @@ class AgentOpsService:
                             run_id, workflow, step["tool"], config, value
                         )
                     else:
-                        output = self._invoke_tool(step["tool"], config, value)
+                        runtime_config = config
+                        if step["tool"] == "llm":
+                            self._agent_event(run_id, "llm.started", {"step_index": index})
+                            runtime_config = {
+                                **config,
+                                "_on_chunk": lambda chunk, step_index=index: self._agent_event(
+                                    run_id,
+                                    "llm.chunk",
+                                    {"step_index": step_index, "text": chunk},
+                                ),
+                            }
+                        output = self._invoke_tool(step["tool"], runtime_config, value)
+                        if step["tool"] == "llm":
+                            self._agent_event(run_id, "llm.completed", {"step_index": index})
                     error = None
                     break
                 except Exception as caught:
@@ -286,6 +308,15 @@ class AgentOpsService:
             )
         self._dispatch_webhooks(run_id, "run.completed")
         self._export_otel_if_configured(run_id)
+
+    def _execute_queued(self, run_id: int) -> None:
+        with self.db.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE runs SET status='running' WHERE id=? AND status='queued'", (run_id,)
+            )
+            if cursor.rowcount != 1:
+                return
+        self._execute(run_id)
 
     def cancel_run(self, run_id: int) -> dict[str, Any]:
         run = self.get_run(run_id)
@@ -357,6 +388,7 @@ class AgentOpsService:
                 str(config.get("model", "")),
                 prompt,
                 str(config.get("system", "")),
+                config.get("_on_chunk"),
             )
         if tool == "fail":
             raise RuntimeError(str(config.get("message", "intentional workflow failure")))
@@ -398,13 +430,9 @@ class AgentOpsService:
             raise ConflictError("handoff target must belong to the same project")
         ancestry = self._workflow_ancestry(run_id)
         if target_workflow_id in ancestry:
-            self._agent_event(
-                run_id, "loop.detected", {"target_workflow_id": target_workflow_id}
-            )
+            self._agent_event(run_id, "loop.detected", {"target_workflow_id": target_workflow_id})
             raise RuntimeError("agent handoff loop detected")
-        self._agent_event(
-            run_id, "handoff.started", {"target_workflow_id": target_workflow_id}
-        )
+        self._agent_event(run_id, "handoff.started", {"target_workflow_id": target_workflow_id})
         child = self.start_run(
             target_workflow_id,
             value,
@@ -437,9 +465,7 @@ class AgentOpsService:
                 (run_id, event_type, encode(payload), now()),
             )
 
-    def put_memory(
-        self, project_id: int, namespace: str, key: str, value: Any
-    ) -> dict[str, Any]:
+    def put_memory(self, project_id: int, namespace: str, key: str, value: Any) -> dict[str, Any]:
         self.get_project(project_id)
         with self.db.connect() as connection:
             connection.execute(
@@ -492,6 +518,18 @@ class AgentOpsService:
             "children": [self.agent_tree(child["id"]) for child in children],
         }
 
+    def list_agent_events(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self.db.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM agent_events ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+        events = []
+        for row in reversed(rows):
+            event = dict(row)
+            event["payload"] = redact(decode(event["payload"]))
+            events.append(event)
+        return events
+
     def export_project(self, project_id: int) -> dict[str, Any]:
         project = self.get_project(project_id)
         workflows = self.list_workflows(project_id)
@@ -509,8 +547,7 @@ class AgentOpsService:
                 for workflow in reversed(workflows)
             ],
             "datasets": [
-                {"name": dataset["name"], "cases": dataset["cases"]}
-                for dataset in datasets
+                {"name": dataset["name"], "cases": dataset["cases"]} for dataset in datasets
             ],
         }
 
@@ -1015,9 +1052,7 @@ ACTUAL: {encode(actual)}""",
             runs.append(run)
         return runs
 
-    def create_webhook(
-        self, project_id: int, url: str, events: list[str]
-    ) -> dict[str, Any]:
+    def create_webhook(self, project_id: int, url: str, events: list[str]) -> dict[str, Any]:
         self.get_project(project_id)
         parsed = urllib.parse.urlparse(url)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
@@ -1107,6 +1142,51 @@ ACTUAL: {encode(actual)}""",
                 "SELECT id,name,role,created_at FROM users ORDER BY created_at"
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def put_project_member(self, project_id: int, user_name: str, role: str) -> dict[str, Any]:
+        self.get_project(project_id)
+        with self.db.connect() as connection:
+            if (
+                connection.execute("SELECT 1 FROM users WHERE name=?", (user_name,)).fetchone()
+                is None
+            ):
+                raise NotFoundError("user not found")
+            existing = connection.execute(
+                "SELECT id FROM project_members WHERE project_id=? AND user_name=?",
+                (project_id, user_name),
+            ).fetchone()
+            if existing:
+                connection.execute(
+                    "UPDATE project_members SET role=? WHERE id=?", (role, existing["id"])
+                )
+                member_id = existing["id"]
+            else:
+                member_id = connection.execute(
+                    "INSERT INTO project_members(project_id,user_name,role,created_at) "
+                    "VALUES (?,?,?,?)",
+                    (project_id, user_name, role, now()),
+                ).lastrowid
+            row = connection.execute(
+                "SELECT * FROM project_members WHERE id=?", (member_id,)
+            ).fetchone()
+        return dict(row)
+
+    def list_project_members(self, project_id: int) -> list[dict[str, Any]]:
+        self.get_project(project_id)
+        with self.db.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM project_members WHERE project_id=? ORDER BY user_name",
+                (project_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def project_role(self, project_id: int, user_name: str) -> str | None:
+        with self.db.connect() as connection:
+            row = connection.execute(
+                "SELECT role FROM project_members WHERE project_id=? AND user_name=?",
+                (project_id, user_name),
+            ).fetchone()
+        return str(row["role"]) if row else None
 
     def put_secret(self, project_id: int, name: str, value: str) -> dict[str, Any]:
         self.get_project(project_id)
