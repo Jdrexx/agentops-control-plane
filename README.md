@@ -78,6 +78,9 @@ See [Architecture](docs/ARCHITECTURE.md), [Deployment](docs/DEPLOYMENT.md), and 
 
 Production operators should also follow [Backup and recovery](docs/BACKUP_AND_RECOVERY.md).
 
+Set `AGENTOPS_PROCESS_MODE` to `web`, `worker`, or `scheduler` for separated hosted
+services. The default `all` mode remains convenient for local development.
+
 ## License
 
 MIT

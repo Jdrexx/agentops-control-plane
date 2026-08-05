@@ -12,7 +12,7 @@ from redis.exceptions import RedisError
 class RunQueue:
     """Durable Redis queue with an in-process fallback for local development."""
 
-    def __init__(self, handler: Callable[[int], None], workers: int = 4):
+    def __init__(self, handler: Callable[[int], None], workers: int = 4, consume: bool = True):
         self.handler = handler
         self.redis_url = os.getenv("REDIS_URL")
         self.redis = Redis.from_url(self.redis_url) if self.redis_url else None
@@ -21,6 +21,7 @@ class RunQueue:
         self.threads: list[threading.Thread] = []
         if self.redis is not None:
             self.redis.ping()
+        if self.redis is not None and consume:
             for index in range(workers):
                 thread = threading.Thread(
                     target=self._consume, name=f"agentops-redis-worker-{index}", daemon=True

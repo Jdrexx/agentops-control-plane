@@ -9,7 +9,7 @@ from pathlib import Path
 from threading import Lock
 
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from .database import Database
@@ -46,13 +46,20 @@ def create_app(database_path: str | None = None) -> FastAPI:
     authenticator = Authenticator(database)
     rate_buckets: dict[str, deque[float]] = defaultdict(deque)
     rate_lock = Lock()
+    process_mode = os.getenv("AGENTOPS_PROCESS_MODE", "all").lower()
+    if process_mode not in {"all", "web", "worker", "scheduler"}:
+        raise RuntimeError("AGENTOPS_PROCESS_MODE must be all, web, worker, or scheduler")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         database.initialize()
-        app.state.service = AgentOpsService(database)
-        app.state.service.recover_incomplete_runs()
-        app.state.service.start_scheduler()
+        app.state.service = AgentOpsService(
+            database, consume_runs=process_mode in {"all", "worker"}
+        )
+        if process_mode in {"all", "worker"}:
+            app.state.service.recover_incomplete_runs()
+        if process_mode in {"all", "scheduler"}:
+            app.state.service.start_scheduler()
         yield
         app.state.service.close()
 
@@ -66,6 +73,8 @@ def create_app(database_path: str | None = None) -> FastAPI:
             "/api/health",
             "/api/ready",
             "/api/auth/status",
+            "/robots.txt",
+            "/.well-known/security.txt",
         } or request.url.path.startswith("/static/")
         actor = Actor("local-user", "admin")
         if not public and authenticator.enabled():
@@ -99,6 +108,8 @@ def create_app(database_path: str | None = None) -> FastAPI:
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Content-Security-Policy"] = "default-src 'self'; style-src 'self'"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         if not public and request.method not in {"GET", "HEAD", "OPTIONS"}:
             service(request).audit(
                 actor.name, request.method, request.url.path, response.status_code
@@ -121,6 +132,17 @@ def create_app(database_path: str | None = None) -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok", "version": "0.1.0"}
 
+    @app.get("/robots.txt", include_in_schema=False)
+    def robots():
+        return PlainTextResponse("User-agent: *\nDisallow: /\n")
+
+    @app.get("/.well-known/security.txt", include_in_schema=False)
+    def security_txt():
+        return PlainTextResponse(
+            "Contact: https://github.com/Jdrexx/agentops-control-plane/security\n"
+            "Expires: 2027-08-05T00:00:00Z\n"
+        )
+
     @app.get("/api/ready")
     def readiness():
         if not database.ready():
@@ -131,7 +153,12 @@ def create_app(database_path: str | None = None) -> FastAPI:
                 {"status": "unavailable", "database": "ok", "queue": "error"},
                 status_code=503,
             )
-        return {"status": "ready", "database": "ok", "queue": queue.backend}
+        return {
+            "status": "ready",
+            "database": "ok",
+            "queue": queue.backend,
+            "process": process_mode,
+        }
 
     @app.get("/api/auth/status")
     def auth_status() -> dict[str, bool]:
