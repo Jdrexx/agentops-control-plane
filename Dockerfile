@@ -15,4 +15,4 @@ COPY scripts ./scripts
 RUN mkdir -p /data && chown -R 10001:10001 /app /data
 USER 10001
 EXPOSE 8110
-CMD ["sh", "-c", ".venv/bin/uvicorn src.agentops.main:app --host 0.0.0.0 --port ${PORT:-8110}"]
+CMD ["sh", "-c", "if [ \"${AGENTOPS_PROCESS_MODE:-all}\" = backup ]; then exec .venv/bin/python scripts/backup_to_s3.py; else exec .venv/bin/uvicorn src.agentops.main:app --host 0.0.0.0 --port ${PORT:-8110}; fi"]
