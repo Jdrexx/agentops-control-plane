@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>AgentOps Control Plane</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/metrics.css">
+</head>
+<body>
+  <header>
+    <div class="brand"><span class="mark">A</span><div><strong>AgentOps</strong><small>CONTROL PLANE</small></div></div>
+    <nav><button class="nav active" data-view="operations">Operations</button><button class="nav" data-view="builder">Builder</button><button class="nav" data-view="quality">Quality</button></nav>
+    <div class="health"><i></i> Local system online</div>
+  </header>
+  <main>
+    <section id="operations" class="view active">
+      <div class="hero"><div><p class="eyebrow">LOCAL-FIRST AGENT OPERATIONS</p><h1>Observe every run.<br><em>Control every action.</em></h1><p class="lede">Trace workflows, inspect failures, approve sensitive steps, replay runs, and measure quality without exporting operational data.</p></div><button id="seed">Load demo workflow</button></div>
+      <section class="metrics"><article><span>Total runs</span><b id="total">0</b></article><article><span>Success rate</span><b id="success">0%</b></article><article><span>Failed runs</span><b id="failed">0</b></article><article><span>Awaiting approval</span><b id="pending">0</b></article><article><span>Model tokens</span><b id="tokens">0</b></article><article><span>Estimated cost</span><b id="cost">$0.00</b></article></section>
+      <section class="panel trend-panel"><div class="panel-title"><div><small>PERFORMANCE TREND</small><h2>Latency and cost by run</h2></div></div><div id="trends" class="trend-bars"><span class="empty">Run workflows to build a trend.</span></div></section>
+      <section class="grid"><article class="panel"><div class="panel-title"><div><small>EXECUTION FEED</small><h2>Recent workflow runs</h2></div><button class="ghost" id="refresh">Refresh</button></div><div id="runs" class="empty">No runs yet.</div></article><article class="panel"><div class="panel-title"><div><small>HUMAN CONTROL</small><h2>Approval inbox</h2></div></div><div id="approvals" class="empty">No actions need approval.</div></article></section>
+      <section class="panel trace-panel"><div class="panel-title"><div><small>TRACE INSPECTOR</small><h2 id="trace-title">Select a run</h2></div><div class="trace-actions"><button class="ghost" id="replay" disabled>Replay</button><button class="ghost" id="compare" disabled>Compare with…</button></div></div><div id="run-summary"></div><div id="trace" class="empty">Step inputs, outputs, timing, and errors will appear here.</div></section>
+    </section>
+
+    <section id="builder" class="view">
+      <div class="section-head"><div><p class="eyebrow">WORKFLOW STUDIO</p><h1>Build with clear,<br><em>inspectable steps.</em></h1></div><p class="lede">Choose a project, arrange tools, configure each step, and run the immutable workflow version.</p></div>
+      <section class="builder-grid">
+        <article class="panel"><div class="panel-title"><div><small>TOOLBOX</small><h2>Available tools</h2></div></div><div id="toolbox"></div></article>
+        <article class="panel canvas"><div class="builder-form"><label>Project<select id="project-select"></select></label><label>Workflow name<input id="workflow-name" value="New workflow" maxlength="100"></label></div><div class="panel-title"><div><small>EXECUTION ORDER</small><h2>Workflow steps</h2></div><button class="ghost" id="clear-steps">Clear</button></div><div id="steps" class="empty">Add a tool to begin.</div><div class="builder-actions"><button id="save-workflow">Save workflow version</button><button class="ghost" id="save-run">Save & run</button></div></article>
+        <article class="panel"><div class="panel-title"><div><small>CONFIGURATION</small><h2>Selected step</h2></div></div><div id="step-config" class="empty">Select a workflow step.</div></article>
+      </section>
+    </section>
+
+    <section id="quality" class="view">
+      <div class="section-head"><div><p class="eyebrow">QUALITY LAB</p><h1>Catch regressions<br><em>before release.</em></h1></div></div>
+      <section class="grid"><article class="panel"><div class="panel-title"><div><small>DATASETS</small><h2>Evaluation suites</h2></div></div><div id="datasets" class="empty">No datasets yet. Create them through the API.</div></article><article class="panel"><div class="panel-title"><div><small>HISTORY</small><h2>Evaluation results</h2></div></div><div id="evaluations" class="empty">No evaluations yet.</div></article></section>
+    </section>
+  </main>
+  <dialog id="json-dialog"><form method="dialog"><div class="panel-title"><h2 id="dialog-title">Details</h2><button class="ghost">Close</button></div><pre id="dialog-json"></pre></form></dialog>
+  <div id="toast"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,49 @@
+services:
+  agentops:
+    build: .
+    ports:
+      - "8110:8110"
+    environment:
+      AGENTOPS_DATABASE: /data/agentops.db
+      AGENTOPS_API_KEY: ${AGENTOPS_API_KEY:-}
+      AGENTOPS_ENCRYPTION_KEY: ${AGENTOPS_ENCRYPTION_KEY:-}
+    volumes:
+      - agentops-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8110/api/health')"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+
+  agentops-postgres:
+    profiles: ["postgres"]
+    build: .
+    ports:
+      - "8111:8110"
+    environment:
+      DATABASE_URL: postgresql://agentops:agentops@postgres:5432/agentops
+      AGENTOPS_API_KEY: ${AGENTOPS_API_KEY:-}
+      AGENTOPS_ENCRYPTION_KEY: ${AGENTOPS_ENCRYPTION_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    profiles: ["postgres"]
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: agentops
+      POSTGRES_USER: agentops
+      POSTGRES_PASSWORD: agentops
+    volumes:
+      - agentops-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentops"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  agentops-data:
+  agentops-postgres:

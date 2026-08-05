@@ -1,0 +1,50 @@
+.metrics {
+  grid-template-columns: repeat(6, 1fr);
+}
+
+@media (max-width: 1000px) {
+  .metrics {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 750px) {
+  .metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.trend-panel {
+  min-height: 190px;
+  margin-bottom: 18px;
+}
+
+.trend-bars {
+  align-items: end;
+  display: flex;
+  gap: 5px;
+  height: 90px;
+}
+
+.trend-bar {
+  background: linear-gradient(to top, var(--blue), var(--mint));
+  border-radius: 3px 3px 0 0;
+  flex: 1;
+  min-width: 5px;
+  opacity: .8;
+}
+
+.trend-bar.failed {
+  background: var(--red);
+}
+
+.trend-bar.h1 { height: 10%; }
+.trend-bar.h2 { height: 20%; }
+.trend-bar.h3 { height: 30%; }
+.trend-bar.h4 { height: 40%; }
+.trend-bar.h5 { height: 50%; }
+.trend-bar.h6 { height: 60%; }
+.trend-bar.h7 { height: 70%; }
+.trend-bar.h8 { height: 80%; }
+.trend-bar.h9 { height: 90%; }
+.trend-bar.h10 { height: 100%; }
