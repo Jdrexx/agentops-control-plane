@@ -125,7 +125,13 @@ def create_app(database_path: str | None = None) -> FastAPI:
     def readiness():
         if not database.ready():
             return JSONResponse({"status": "unavailable", "database": "error"}, status_code=503)
-        return {"status": "ready", "database": "ok"}
+        queue = app.state.service.run_queue
+        if not queue.ready():
+            return JSONResponse(
+                {"status": "unavailable", "database": "ok", "queue": "error"},
+                status_code=503,
+            )
+        return {"status": "ready", "database": "ok", "queue": queue.backend}
 
     @app.get("/api/auth/status")
     def auth_status() -> dict[str, bool]:

@@ -7,7 +7,11 @@ def test_health_and_dashboard(client: TestClient):
     health = client.get("/api/health")
     assert health.status_code == 200
     assert health.json() == {"status": "ok", "version": "0.1.0"}
-    assert client.get("/api/ready").json() == {"status": "ready", "database": "ok"}
+    assert client.get("/api/ready").json() == {
+        "status": "ready",
+        "database": "ok",
+        "queue": "local",
+    }
     assert client.get("/api/auth/status").json() == {"enabled": False}
     assert client.get("/api/session").json() == {"name": "local-user", "role": "admin"}
     dashboard = client.get("/")

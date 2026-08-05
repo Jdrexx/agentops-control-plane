@@ -32,6 +32,14 @@ class RunQueue:
     def backend(self) -> str:
         return "redis" if self.redis is not None else "local"
 
+    def ready(self) -> bool:
+        if self.redis is None:
+            return True
+        try:
+            return bool(self.redis.ping())
+        except RedisError:
+            return False
+
     def submit(self, run_id: int) -> None:
         if self.redis is None:
             self.local.submit(self.handler, run_id)
