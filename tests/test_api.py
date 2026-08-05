@@ -11,12 +11,14 @@ def test_health_and_dashboard(client: TestClient):
         "status": "ready",
         "database": "ok",
         "queue": "local",
+        "process": "all",
     }
     assert client.get("/api/auth/status").json() == {"enabled": False}
     assert client.get("/api/session").json() == {"name": "local-user", "role": "admin"}
     dashboard = client.get("/")
     assert dashboard.status_code == 200
     assert "AgentOps Control Plane" in dashboard.text
+    assert client.get("/robots.txt").text == "User-agent: *\nDisallow: /\n"
 
 
 def test_project_crud_and_duplicate_conflict(client: TestClient, project: dict):

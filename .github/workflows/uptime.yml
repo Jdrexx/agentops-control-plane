@@ -1,0 +1,20 @@
+name: Production uptime
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify production dependencies
+        run: |
+          response="$(curl --fail --silent --show-error --retry 3 \
+            https://agentops-control-plane-production.up.railway.app/api/ready)"
+          echo "$response" | jq -e \
+            '.status == "ready" and .database == "ok" and .queue == "redis"'

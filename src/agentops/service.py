@@ -46,12 +46,17 @@ def decode(value: str | None) -> Any:
 
 
 class AgentOpsService:
-    def __init__(self, database: Database, providers: ProviderRegistry | None = None):
+    def __init__(
+        self,
+        database: Database,
+        providers: ProviderRegistry | None = None,
+        consume_runs: bool = True,
+    ):
         self.db = database
         self.providers = providers or ProviderRegistry()
         self.vault = SecretVault()
         self.notifier = Notifier()
-        self.run_queue = RunQueue(self._execute_queued)
+        self.run_queue = RunQueue(self._execute_queued, consume=consume_runs)
         self.tool_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="agentops-tool")
         self._scheduler_stop = threading.Event()
         self._scheduler_thread: threading.Thread | None = None
