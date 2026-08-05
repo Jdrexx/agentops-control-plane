@@ -29,3 +29,11 @@ database, so never point it at production during a routine test.
 
 Recommended cadence: daily backups, 30-day retention, and a documented restore drill
 at least once per quarter.
+
+## Hosted scheduled backups
+
+`scripts/backup_to_s3.py` creates a PostgreSQL custom-format dump, stores its SHA-256
+checksum as object metadata, uploads it to S3-compatible storage, and removes objects
+older than `BACKUP_RETENTION_DAYS`. Run it from a private scheduled service with only
+`DATABASE_URL` and bucket credentials; it does not require the application API key or
+encryption key.
