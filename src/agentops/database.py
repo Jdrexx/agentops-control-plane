@@ -120,6 +120,14 @@ CREATE TABLE IF NOT EXISTS users (
   role TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS project_members (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  user_name TEXT NOT NULL,
+  role TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(project_id, user_name)
+);
 CREATE TABLE IF NOT EXISTS secrets (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -167,6 +175,7 @@ CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status, created_at 
 CREATE INDEX IF NOT EXISTS idx_schedules_due ON schedules(enabled, next_run_at);
 CREATE INDEX IF NOT EXISTS idx_webhooks_project ON webhooks(project_id, enabled);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_events(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_members_user ON project_members(user_name, project_id);
 """
 
 
@@ -203,6 +212,10 @@ class PostgresCursor:
 
     def fetchall(self) -> list[CompatRow]:
         return [self._row(row) for row in self.cursor.fetchall()]  # type: ignore[misc]
+
+    @property
+    def rowcount(self) -> int:
+        return self.cursor.rowcount
 
 
 class PostgresConnection:
@@ -248,18 +261,14 @@ class Database:
             connection.executescript(schema)
             if self.is_postgres:
                 return
-            columns = {
-                row["name"] for row in connection.execute("PRAGMA table_info(approvals)")
-            }
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(approvals)")}
             if "expires_at" not in columns:
                 connection.execute("ALTER TABLE approvals ADD COLUMN expires_at TEXT")
             if "escalation_level" not in columns:
                 connection.execute(
                     "ALTER TABLE approvals ADD COLUMN escalation_level INTEGER NOT NULL DEFAULT 0"
                 )
-            span_columns = {
-                row["name"] for row in connection.execute("PRAGMA table_info(spans)")
-            }
+            span_columns = {row["name"] for row in connection.execute("PRAGMA table_info(spans)")}
             for name, definition in {
                 "input_tokens": "INTEGER NOT NULL DEFAULT 0",
                 "output_tokens": "INTEGER NOT NULL DEFAULT 0",
@@ -267,9 +276,7 @@ class Database:
             }.items():
                 if name not in span_columns:
                     connection.execute(f"ALTER TABLE spans ADD COLUMN {name} {definition}")
-            run_columns = {
-                row["name"] for row in connection.execute("PRAGMA table_info(runs)")
-            }
+            run_columns = {row["name"] for row in connection.execute("PRAGMA table_info(runs)")}
             if "max_steps" not in run_columns:
                 connection.execute(
                     "ALTER TABLE runs ADD COLUMN max_steps INTEGER NOT NULL DEFAULT 100"

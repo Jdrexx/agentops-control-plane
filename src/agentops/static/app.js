@@ -1,5 +1,5 @@
 const $ = id => document.getElementById(id);
-const state = {tools: [], projects: [], steps: [], selectedStep: null, selectedRun: null, runs: []};
+const state = {tools: [], templates: [], projects: [], steps: [], selectedStep: null, selectedRun: null, runs: [], lastEventId: 0};
 const requireLogin = () => {
   $('login-error').textContent = '';
   if (!$('login-dialog').open) $('login-dialog').showModal();
@@ -41,10 +41,20 @@ async function showTrace(id) {
 }
 
 async function loadBuilder() {
-  [state.tools, state.projects] = await Promise.all([api('/api/tools'), api('/api/projects')]);
+  [state.tools, state.templates, state.projects] = await Promise.all([api('/api/tools'), api('/api/templates'), api('/api/projects')]);
+  $('templates').innerHTML = state.templates.map(template => `<button class="tool" data-template="${esc(template.id)}"><b>${esc(template.name)}</b><small>${esc(template.description)}</small><span>＋</span></button>`).join('');
   $('toolbox').innerHTML = state.tools.map(tool => `<button class="tool" data-tool="${tool.name}"><b>${esc(tool.name)}</b><small>${esc(tool.description)}</small><span>＋</span></button>`).join('');
   $('project-select').innerHTML = state.projects.length ? state.projects.map(project => `<option value="${project.id}">${esc(project.name)}</option>`).join('') : '<option value="">Create a project via API or load demo</option>';
   document.querySelectorAll('[data-tool]').forEach(el => el.onclick = () => addStep(el.dataset.tool));
+  document.querySelectorAll('[data-template]').forEach(el => el.onclick = () => applyTemplate(el.dataset.template));
+}
+
+async function applyTemplate(templateId) {
+  if (!state.projects.length) throw new Error('Create a project or load the demo first');
+  const projectId = Number($('project-select').value);
+  const workflow = await api(`/api/templates/${templateId}?project_id=${projectId}`, {method:'POST'});
+  state.steps = workflow.steps; $('workflow-name').value = workflow.name; state.selectedStep = null;
+  renderSteps(); toast(`Created ${workflow.name} v${workflow.version}`);
 }
 
 function addStep(toolName) { const tool = state.tools.find(item => item.name === toolName); state.steps.push({name: toolName.replace('_', ' '), tool: toolName, config: structuredClone(tool.config)}); state.selectedStep = state.steps.length - 1; renderSteps(); }
@@ -74,6 +84,7 @@ $('login-form').onsubmit = async event => {
   } catch (error) { sessionStorage.removeItem('agentops-token'); $('login-error').textContent = 'That token was not accepted.'; }
 };
 $('logout').onclick = () => { sessionStorage.removeItem('agentops-token'); $('logout').hidden = true; requireLogin(); };
+$('clear-stream').onclick = () => { $('live-output').textContent = 'Waiting for a streamed LLM run.'; };
 
 async function bootstrap() {
   const health = await fetch('/api/ready');
@@ -92,13 +103,17 @@ function connectLive() {
   const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
   const socket = new WebSocket(`${protocol}://${location.host}/api/live?token=${encodeURIComponent(token)}`);
   socket.onmessage = event => {
-    const stats = JSON.parse(event.data).stats;
+    const message = JSON.parse(event.data); const stats = message.stats;
     $('total').textContent = stats.total_runs;
     $('success').textContent = `${Math.round(stats.success_rate * 100)}%`;
     $('failed').textContent = stats.failed_runs;
     $('pending').textContent = stats.pending_approvals;
     $('tokens').textContent = (stats.input_tokens + stats.output_tokens).toLocaleString();
     $('cost').textContent = `$${stats.total_cost_usd.toFixed(4)}`;
+    const fresh = message.events.filter(item => item.id > state.lastEventId);
+    if (message.events.length) state.lastEventId = Math.max(...message.events.map(item => item.id));
+    fresh.filter(item => item.event_type === 'llm.started').forEach(() => { $('live-output').textContent = ''; });
+    fresh.filter(item => item.event_type === 'llm.chunk').forEach(item => { $('live-output').textContent += item.payload.text; });
   };
   socket.onclose = () => setTimeout(connectLive, 3000);
 }

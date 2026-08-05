@@ -7,7 +7,11 @@ def test_health_and_dashboard(client: TestClient):
     health = client.get("/api/health")
     assert health.status_code == 200
     assert health.json() == {"status": "ok", "version": "0.1.0"}
-    assert client.get("/api/ready").json() == {"status": "ready", "database": "ok"}
+    assert client.get("/api/ready").json() == {
+        "status": "ready",
+        "database": "ok",
+        "queue": "local",
+    }
     assert client.get("/api/auth/status").json() == {"enabled": False}
     assert client.get("/api/session").json() == {"name": "local-user", "role": "admin"}
     dashboard = client.get("/")
@@ -27,6 +31,16 @@ def test_project_validation_and_not_found(client: TestClient):
     assert client.post("/api/projects", json={"name": "   "}).status_code == 422
     assert client.post("/api/projects", json={"name": "x" * 101}).status_code == 422
     assert client.get("/api/projects/9999").status_code == 404
+
+
+def test_workflow_templates_create_versioned_workflow(client: TestClient, project: dict):
+    templates = client.get("/api/templates").json()
+    assert {item["id"] for item in templates} >= {"research-brief", "code-review"}
+    created = client.post(f"/api/templates/research-brief?project_id={project['id']}")
+    assert created.status_code == 201
+    assert created.json()["name"] == "Research brief"
+    assert created.json()["steps"][-1]["tool"] == "approval"
+    assert client.post(f"/api/templates/missing?project_id={project['id']}").status_code == 404
 
 
 def test_workflow_versions_are_immutable(client: TestClient, project: dict):
@@ -182,9 +196,7 @@ def test_approval_can_edit_escalate_and_expire(client: TestClient, project: dict
     )
     client.post(f"/api/workflows/{workflow['id']}/runs", json={"input": "draft"})
     approval = client.get("/api/approvals?status=pending").json()[0]
-    escalated = client.post(
-        f"/api/approvals/{approval['id']}/escalate?note=Needs+owner"
-    ).json()
+    escalated = client.post(f"/api/approvals/{approval['id']}/escalate?note=Needs+owner").json()
     assert escalated["escalation_level"] == 1
     approved = client.post(
         f"/api/approvals/{approval['id']}/decision",
@@ -192,9 +204,7 @@ def test_approval_can_edit_escalate_and_expire(client: TestClient, project: dict
     ).json()
     assert approved["output"] == "FINAL:edited"
 
-    expiring = client.post(
-        f"/api/workflows/{workflow['id']}/runs", json={"input": "stale"}
-    ).json()
+    expiring = client.post(f"/api/workflows/{workflow['id']}/runs", json={"input": "stale"}).json()
     assert expiring["status"] == "waiting_approval"
     assert client.app.state.service.expire_approvals("2999-01-01T00:00:00+00:00") == 1
     expired = client.get(f"/api/runs/{expiring['id']}").json()
@@ -298,15 +308,9 @@ def test_arbitrary_json_values_round_trip(client: TestClient, project: dict):
 def test_tool_catalog_history_and_run_comparison(client: TestClient, project: dict):
     tools = client.get("/api/tools").json()
     assert {tool["name"] for tool in tools} >= {"input", "approval", "template"}
-    workflow = create_workflow(
-        client, project["id"], [{"name": "Upper", "tool": "uppercase"}]
-    )
-    left = client.post(
-        f"/api/workflows/{workflow['id']}/runs", json={"input": "first"}
-    ).json()
-    right = client.post(
-        f"/api/workflows/{workflow['id']}/runs", json={"input": "second"}
-    ).json()
+    workflow = create_workflow(client, project["id"], [{"name": "Upper", "tool": "uppercase"}])
+    left = client.post(f"/api/workflows/{workflow['id']}/runs", json={"input": "first"}).json()
+    right = client.post(f"/api/workflows/{workflow['id']}/runs", json={"input": "second"}).json()
     comparison = client.get(f"/api/runs/{left['id']}/compare/{right['id']}").json()
     assert comparison["same_workflow"] is True
     assert comparison["output_changed"] is True
@@ -332,8 +336,9 @@ def test_tool_catalog_history_and_run_comparison(client: TestClient, project: di
 def test_llm_tool_uses_provider_boundary(client: TestClient, project: dict):
     calls = []
 
-    def generate(provider: str, model: str, prompt: str, system: str = "") -> str:
+    def generate(provider: str, model: str, prompt: str, system: str = "", on_chunk=None) -> str:
         calls.append((provider, model, prompt, system))
+        on_chunk("model response")
         return "model response"
 
     client.app.state.service.providers.generate = generate

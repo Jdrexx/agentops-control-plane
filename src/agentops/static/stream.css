@@ -1,0 +1,14 @@
+.stream-panel {
+  margin: 18px 0;
+  min-height: 0;
+}
+
+#live-output {
+  margin: 0;
+  min-height: 72px;
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  color: var(--mint);
+  font: 13px/1.6 ui-monospace, monospace;
+}
