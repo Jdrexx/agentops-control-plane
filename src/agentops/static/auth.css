@@ -1,0 +1,33 @@
+.session {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.session .ghost {
+  padding: 6px 10px;
+}
+
+.login-dialog {
+  width: min(440px, 92vw);
+}
+
+.login-dialog form {
+  display: grid;
+  gap: 16px;
+}
+
+.login-dialog h2 {
+  font-size: 28px;
+  margin: 0;
+}
+
+.login-dialog p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.login-dialog .error {
+  min-height: 1.5em;
+  color: var(--red);
+}

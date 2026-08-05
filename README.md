@@ -73,6 +73,8 @@ node --check src/agentops/static/app.js
 
 See [Architecture](docs/ARCHITECTURE.md), [Deployment](docs/DEPLOYMENT.md), and [Threat Model](docs/THREAT_MODEL.md).
 
+Production operators should also follow [Backup and recovery](docs/BACKUP_AND_RECOVERY.md).
+
 ## License
 
 MIT
