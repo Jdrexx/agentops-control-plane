@@ -6,12 +6,13 @@
   <title>AgentOps Control Plane</title>
   <link rel="stylesheet" href="/static/styles.css">
   <link rel="stylesheet" href="/static/metrics.css">
+  <link rel="stylesheet" href="/static/auth.css">
 </head>
 <body>
   <header>
     <div class="brand"><span class="mark">A</span><div><strong>AgentOps</strong><small>CONTROL PLANE</small></div></div>
     <nav><button class="nav active" data-view="operations">Operations</button><button class="nav" data-view="builder">Builder</button><button class="nav" data-view="quality">Quality</button></nav>
-    <div class="health"><i></i> Local system online</div>
+    <div class="session"><span class="health"><i></i><span id="health-label">Checking system</span></span><button class="ghost" id="logout" hidden>Log out</button></div>
   </header>
   <main>
     <section id="operations" class="view active">
@@ -37,6 +38,7 @@
     </section>
   </main>
   <dialog id="json-dialog"><form method="dialog"><div class="panel-title"><h2 id="dialog-title">Details</h2><button class="ghost">Close</button></div><pre id="dialog-json"></pre></form></dialog>
+  <dialog id="login-dialog" class="login-dialog"><form id="login-form"><p class="eyebrow">SECURE ACCESS</p><h2>Sign in to AgentOps</h2><p>Enter the operator token configured for this environment. It remains in this browser tab only.</p><label>Access token<input id="login-token" type="password" autocomplete="current-password" required></label><p id="login-error" class="error" role="alert"></p><button type="submit">Sign in</button></form></dialog>
   <div id="toast"></div>
   <script src="/static/app.js"></script>
 </body>

@@ -279,6 +279,15 @@ class Database:
                     "ALTER TABLE runs ADD COLUMN actor_role TEXT NOT NULL DEFAULT 'admin'"
                 )
 
+    def ready(self) -> bool:
+        """Return whether the configured database accepts a simple query."""
+        try:
+            with self.connect() as connection:
+                row = connection.execute("SELECT 1 AS ready").fetchone()
+                return row is not None and row["ready"] == 1
+        except Exception:
+            return False
+
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection | PostgresConnection]:
         if self.is_postgres:

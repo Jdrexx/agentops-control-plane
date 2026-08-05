@@ -1,13 +1,15 @@
 const $ = id => document.getElementById(id);
 const state = {tools: [], projects: [], steps: [], selectedStep: null, selectedRun: null, runs: []};
+const requireLogin = () => {
+  $('login-error').textContent = '';
+  if (!$('login-dialog').open) $('login-dialog').showModal();
+  $('login-token').focus();
+};
 const api = async (path, options = {}) => {
   const token = sessionStorage.getItem('agentops-token');
   const headers = {'Content-Type': 'application/json', ...(token ? {Authorization: `Bearer ${token}`} : {})};
   const response = await fetch(path, {headers, ...options});
-  if (response.status === 401 && !options.retried) {
-    const supplied = prompt('AgentOps API token');
-    if (supplied) { sessionStorage.setItem('agentops-token', supplied); return api(path, {...options, retried: true}); }
-  }
+  if (response.status === 401) { requireLogin(); throw new Error('Sign in required'); }
   if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.detail || `Request failed: ${response.status}`); }
   return response.json();
 };
@@ -62,7 +64,28 @@ async function seed() { const suffix = Date.now(); const project = await api('/a
 function switchView(id) { document.querySelectorAll('.view').forEach(el => el.classList.toggle('active', el.id === id)); document.querySelectorAll('.nav').forEach(el => el.classList.toggle('active', el.dataset.view === id)); if (id === 'builder') loadBuilder().catch(error => toast(error.message)); if (id === 'quality') loadQuality().catch(error => toast(error.message)); }
 
 document.querySelectorAll('.nav').forEach(el => el.onclick = () => switchView(el.dataset.view)); $('seed').onclick = () => seed().catch(error => toast(error.message)); $('refresh').onclick = () => loadOperations().catch(error => toast(error.message)); $('clear-steps').onclick = () => { state.steps = []; state.selectedStep = null; renderSteps(); }; $('save-workflow').onclick = () => saveWorkflow(false).catch(error => toast(error.message)); $('save-run').onclick = () => saveWorkflow(true).catch(error => toast(error.message)); $('replay').onclick = async () => { const run = await api(`/api/runs/${state.selectedRun.id}/replay`, {method:'POST'}); await loadOperations(); await showTrace(run.id); toast('Replay completed'); }; $('compare').onclick = async () => { const other = Number(prompt('Compare with run ID')); if (other) showJSON('Run comparison', await api(`/api/runs/${state.selectedRun.id}/compare/${other}`)); };
-loadOperations().catch(error => toast(error.message));
+$('login-form').onsubmit = async event => {
+  event.preventDefault();
+  sessionStorage.setItem('agentops-token', $('login-token').value);
+  try {
+    const actor = await api('/api/session');
+    $('login-dialog').close(); $('login-token').value = ''; $('logout').hidden = false;
+    toast(`Signed in as ${actor.name} (${actor.role})`); await loadOperations(); connectLive();
+  } catch (error) { sessionStorage.removeItem('agentops-token'); $('login-error').textContent = 'That token was not accepted.'; }
+};
+$('logout').onclick = () => { sessionStorage.removeItem('agentops-token'); $('logout').hidden = true; requireLogin(); };
+
+async function bootstrap() {
+  const health = await fetch('/api/ready');
+  $('health-label').textContent = health.ok ? 'System ready' : 'System unavailable';
+  const auth = await fetch('/api/auth/status').then(response => response.json());
+  if (auth.enabled) {
+    if (!sessionStorage.getItem('agentops-token')) return requireLogin();
+    try { await api('/api/session'); $('logout').hidden = false; } catch (_) { return; }
+  }
+  await loadOperations(); connectLive();
+}
+bootstrap().catch(error => toast(error.message));
 
 function connectLive() {
   const token = sessionStorage.getItem('agentops-token') || '';
@@ -79,4 +102,3 @@ function connectLive() {
   };
   socket.onclose = () => setTimeout(connectLive, 3000);
 }
-connectLive();

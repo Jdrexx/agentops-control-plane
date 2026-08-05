@@ -16,6 +16,12 @@ def test_optional_auth_roles_and_audit(tmp_path: Path, monkeypatch):
     with TestClient(
         create_app(str(tmp_path / "auth.db")), backend_options={"use_uvloop": True}
     ) as client:
+        assert client.get("/api/auth/status").json() == {"enabled": True}
+        assert client.get("/api/session").status_code == 401
+        assert client.get("/api/session", headers=authorized(admin_token)).json() == {
+            "name": "bootstrap-admin",
+            "role": "admin",
+        }
         assert client.get("/api/projects").status_code == 401
         project = client.post(
             "/api/projects", json={"name": "Secured"}, headers=authorized(admin_token)

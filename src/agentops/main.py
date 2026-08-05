@@ -61,7 +61,7 @@ def create_app(database_path: str | None = None) -> FastAPI:
     @app.middleware("http")
     async def security_boundary(request: Request, call_next):
         public = (
-            request.url.path in {"/", "/api/health"}
+            request.url.path in {"/", "/api/health", "/api/ready", "/api/auth/status"}
             or request.url.path.startswith("/static/")
         )
         actor = Actor("local-user", "admin")
@@ -119,6 +119,21 @@ def create_app(database_path: str | None = None) -> FastAPI:
     @app.get("/api/health")
     def health() -> dict[str, str]:
         return {"status": "ok", "version": "0.1.0"}
+
+    @app.get("/api/ready")
+    def readiness():
+        if not database.ready():
+            return JSONResponse({"status": "unavailable", "database": "error"}, status_code=503)
+        return {"status": "ready", "database": "ok"}
+
+    @app.get("/api/auth/status")
+    def auth_status() -> dict[str, bool]:
+        return {"enabled": authenticator.enabled()}
+
+    @app.get("/api/session")
+    def session(request: Request) -> dict[str, str]:
+        actor: Actor = request.state.actor
+        return {"name": actor.name, "role": actor.role}
 
     @app.post("/api/projects", status_code=201)
     def create_project(body: ProjectCreate, request: Request):

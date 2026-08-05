@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --frozen
+      - name: Lint Python
+        run: uv run ruff check .
+      - name: Test with coverage
+        run: uv run pytest --cov=src.agentops --cov-report=term-missing --cov-fail-under=85
+      - name: Validate dashboard JavaScript
+        run: node --check src/agentops/static/app.js
+      - name: Build production container
+        run: docker build -t agentops-control-plane:ci .
