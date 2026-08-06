@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 import boto3
 
@@ -19,6 +20,19 @@ def required(name: str) -> str:
 
 def main() -> None:
     database_url = required("DATABASE_URL")
+    parsed_database = urlsplit(database_url)
+    if not all((parsed_database.hostname, parsed_database.username, parsed_database.path)):
+        raise RuntimeError("DATABASE_URL is invalid")
+    pg_environment = os.environ.copy()
+    pg_environment.update(
+        {
+            "PGHOST": parsed_database.hostname,
+            "PGPORT": str(parsed_database.port or 5432),
+            "PGUSER": unquote(parsed_database.username),
+            "PGDATABASE": unquote(parsed_database.path.lstrip("/")),
+            "PGPASSWORD": unquote(parsed_database.password or ""),
+        }
+    )
     bucket = required("AWS_S3_BUCKET_NAME")
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     key = f"postgres/agentops-{timestamp}.dump"
@@ -31,9 +45,9 @@ def main() -> None:
                 "--no-owner",
                 "--no-privileges",
                 f"--file={backup}",
-                database_url,
             ],
             check=True,
+            env=pg_environment,
             timeout=900,
         )
         checksum = hashlib.sha256(backup.read_bytes()).hexdigest()
