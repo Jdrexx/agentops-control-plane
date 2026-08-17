@@ -1,6 +1,7 @@
 const $ = id => document.getElementById(id);
-const state = {tools: [], templates: [], projects: [], steps: [], selectedStep: null, selectedRun: null, runs: [], lastEventId: 0};
+const state = {tools: [], templates: [], projects: [], steps: [], selectedStep: null, selectedRun: null, runs: [], lastEventId: 0, liveSocket: null, liveReconnectTimer: null, liveEnabled: false, authEnabled: false};
 const requireLogin = () => {
+  disconnectLive();
   $('login-error').textContent = '';
   if (!$('login-dialog').open) $('login-dialog').showModal();
   $('login-token').focus();
@@ -90,6 +91,7 @@ async function bootstrap() {
   const health = await fetch('/api/ready');
   $('health-label').textContent = health.ok ? 'System ready' : 'System unavailable';
   const auth = await fetch('/api/auth/status').then(response => response.json());
+  state.authEnabled = auth.enabled;
   if (auth.enabled) {
     if (!sessionStorage.getItem('agentops-token')) return requireLogin();
     try { await api('/api/session'); $('logout').hidden = false; } catch (_) { return; }
@@ -98,10 +100,25 @@ async function bootstrap() {
 }
 bootstrap().catch(error => toast(error.message));
 
+function disconnectLive() {
+  state.liveEnabled = false;
+  if (state.liveReconnectTimer !== null) clearTimeout(state.liveReconnectTimer);
+  state.liveReconnectTimer = null;
+  const socket = state.liveSocket;
+  state.liveSocket = null;
+  if (socket && socket.readyState < WebSocket.CLOSING) socket.close(1000, 'session ended');
+}
+
 function connectLive() {
+  disconnectLive();
+  state.liveEnabled = true;
   const token = sessionStorage.getItem('agentops-token') || '';
   const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-  const socket = new WebSocket(`${protocol}://${location.host}/api/live?token=${encodeURIComponent(token)}`);
+  const socket = new WebSocket(`${protocol}://${location.host}/api/live`);
+  state.liveSocket = socket;
+  socket.onopen = () => {
+    if (state.authEnabled) socket.send(JSON.stringify({type: 'authenticate', token}));
+  };
   socket.onmessage = event => {
     const message = JSON.parse(event.data); const stats = message.stats;
     $('total').textContent = stats.total_runs;
@@ -115,5 +132,9 @@ function connectLive() {
     fresh.filter(item => item.event_type === 'llm.started').forEach(() => { $('live-output').textContent = ''; });
     fresh.filter(item => item.event_type === 'llm.chunk').forEach(item => { $('live-output').textContent += item.payload.text; });
   };
-  socket.onclose = () => setTimeout(connectLive, 3000);
+  socket.onclose = () => {
+    if (state.liveSocket !== socket) return;
+    state.liveSocket = null;
+    if (state.liveEnabled) state.liveReconnectTimer = setTimeout(connectLive, 3000);
+  };
 }

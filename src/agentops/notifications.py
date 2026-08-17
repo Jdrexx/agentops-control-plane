@@ -31,7 +31,7 @@ class Notifier:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=10):  # noqa: S310
+            with urllib.request.urlopen(request, timeout=10):  # noqa: S310  # nosec B310
                 pass
         except (urllib.error.URLError, TimeoutError) as error:
             raise RuntimeError(f"Slack notification failed: {error}") from error
