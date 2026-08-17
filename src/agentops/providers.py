@@ -134,7 +134,7 @@ class ProviderRegistry:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310
+            with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310  # nosec B310
                 return json.loads(response.read())
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
             raise ProviderError(f"provider request failed: {error}") from error
@@ -158,7 +158,7 @@ class ProviderRegistry:
         )
         chunks: list[str] = []
         try:
-            with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310
+            with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310  # nosec B310
                 for raw_line in response:
                     line = raw_line.decode().strip()
                     if server_sent_events:

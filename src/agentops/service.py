@@ -115,9 +115,18 @@ class AgentOpsService:
             raise NotFoundError("project not found")
         return dict(row)
 
-    def list_projects(self) -> list[dict[str, Any]]:
+    def list_projects(self, project_ids: set[int] | None = None) -> list[dict[str, Any]]:
+        query = "SELECT * FROM projects"
+        params: list[Any] = []
+        if project_ids is not None:
+            if not project_ids:
+                return []
+            placeholders = ",".join("?" for _ in project_ids)
+            query += f" WHERE id IN ({placeholders})"
+            params.extend(sorted(project_ids))
+        query += " ORDER BY created_at DESC"
         with self.db.connect() as connection:
-            rows = connection.execute("SELECT * FROM projects ORDER BY created_at DESC").fetchall()
+            rows = connection.execute(query, params).fetchall()
         return [dict(row) for row in rows]
 
     def create_workflow(
@@ -148,12 +157,23 @@ class AgentOpsService:
         result["steps"] = decode(result.pop("definition"))
         return result
 
-    def list_workflows(self, project_id: int | None = None) -> list[dict[str, Any]]:
+    def list_workflows(
+        self, project_id: int | None = None, project_ids: set[int] | None = None
+    ) -> list[dict[str, Any]]:
         query = "SELECT * FROM workflows"
-        params: tuple[Any, ...] = ()
+        conditions: list[str] = []
+        params: list[Any] = []
         if project_id is not None:
-            query += " WHERE project_id=?"
-            params = (project_id,)
+            conditions.append("project_id=?")
+            params.append(project_id)
+        if project_ids is not None:
+            if not project_ids:
+                return []
+            placeholders = ",".join("?" for _ in project_ids)
+            conditions.append(f"project_id IN ({placeholders})")
+            params.extend(sorted(project_ids))
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
         query += " ORDER BY created_at DESC"
         with self.db.connect() as connection:
             rows = connection.execute(query, params).fetchall()
@@ -523,11 +543,23 @@ class AgentOpsService:
             "children": [self.agent_tree(child["id"]) for child in children],
         }
 
-    def list_agent_events(self, limit: int = 100) -> list[dict[str, Any]]:
+    def list_agent_events(
+        self, limit: int = 100, project_ids: set[int] | None = None
+    ) -> list[dict[str, Any]]:
+        query = """SELECT ae.* FROM agent_events ae
+                   JOIN runs r ON r.id=ae.run_id
+                   JOIN workflows w ON w.id=r.workflow_id"""
+        params: list[Any] = []
+        if project_ids is not None:
+            if not project_ids:
+                return []
+            placeholders = ",".join("?" for _ in project_ids)
+            query += f" WHERE w.project_id IN ({placeholders})"
+            params.extend(sorted(project_ids))
+        query += " ORDER BY ae.id DESC LIMIT ?"
+        params.append(limit)
         with self.db.connect() as connection:
-            rows = connection.execute(
-                "SELECT * FROM agent_events ORDER BY id DESC LIMIT ?", (limit,)
-            ).fetchall()
+            rows = connection.execute(query, params).fetchall()
         events = []
         for row in reversed(rows):
             event = dict(row)
@@ -545,6 +577,7 @@ class AgentOpsService:
             "project": {"name": project["name"], "description": project["description"]},
             "workflows": [
                 {
+                    "source_id": workflow["id"],
                     "name": workflow["name"],
                     "version": workflow["version"],
                     "steps": workflow["steps"],
@@ -565,11 +598,36 @@ class AgentOpsService:
             str(source_project.get("description", "")),
         )
         workflow_ids = []
+        workflow_id_map: dict[int, int] = {}
+        imported_workflows: list[tuple[dict[str, Any], int]] = []
         for workflow in package.get("workflows", []):
             created = self.create_workflow(
                 project["id"], str(workflow["name"]), list(workflow["steps"])
             )
             workflow_ids.append(created["id"])
+            imported_workflows.append((workflow, created["id"]))
+            if workflow.get("source_id") is not None:
+                workflow_id_map[int(workflow["source_id"])] = created["id"]
+        for workflow, workflow_id in imported_workflows:
+            steps = list(workflow["steps"])
+            changed = False
+            for step in steps:
+                if step.get("tool") != "handoff":
+                    continue
+                source_target = int(step.get("config", {}).get("workflow_id", 0))
+                if source_target not in workflow_id_map:
+                    raise ConflictError("imported handoff target is not present in the package")
+                step["config"] = {
+                    **step.get("config", {}),
+                    "workflow_id": workflow_id_map[source_target],
+                }
+                changed = True
+            if changed:
+                with self.db.connect() as connection:
+                    connection.execute(
+                        "UPDATE workflows SET definition=? WHERE id=?",
+                        (encode(steps), workflow_id),
+                    )
         dataset_ids = []
         for dataset in package.get("datasets", []):
             created = self.create_dataset(
@@ -653,13 +711,27 @@ class AgentOpsService:
                 item["output"] = redact(item["output"])
         return result
 
-    def list_runs(self, workflow_id: int | None = None, limit: int = 100) -> list[dict[str, Any]]:
-        query = "SELECT * FROM runs"
+    def list_runs(
+        self,
+        workflow_id: int | None = None,
+        limit: int = 100,
+        project_ids: set[int] | None = None,
+    ) -> list[dict[str, Any]]:
+        query = "SELECT r.* FROM runs r JOIN workflows w ON w.id=r.workflow_id"
+        conditions: list[str] = []
         params: list[Any] = []
         if workflow_id is not None:
-            query += " WHERE workflow_id=?"
+            conditions.append("r.workflow_id=?")
             params.append(workflow_id)
-        query += " ORDER BY started_at DESC LIMIT ?"
+        if project_ids is not None:
+            if not project_ids:
+                return []
+            placeholders = ",".join("?" for _ in project_ids)
+            conditions.append(f"w.project_id IN ({placeholders})")
+            params.extend(sorted(project_ids))
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        query += " ORDER BY r.started_at DESC LIMIT ?"
         params.append(limit)
         with self.db.connect() as connection:
             rows = connection.execute(query, params).fetchall()
@@ -771,20 +843,38 @@ class AgentOpsService:
             self._dispatch_webhooks(approval["run_id"], "approval.expired")
         return len(rows)
 
-    def list_approvals(self, status: str | None = None) -> list[dict[str, Any]]:
-        query = "SELECT * FROM approvals"
-        params: tuple[Any, ...] = ()
+    def list_approvals(
+        self, status: str | None = None, project_ids: set[int] | None = None
+    ) -> list[dict[str, Any]]:
+        query = """SELECT a.* FROM approvals a
+                   JOIN runs r ON r.id=a.run_id
+                   JOIN workflows w ON w.id=r.workflow_id"""
+        conditions: list[str] = []
+        params: list[Any] = []
         if status is not None:
-            query += " WHERE status=?"
-            params = (status,)
-        query += " ORDER BY created_at DESC"
+            conditions.append("a.status=?")
+            params.append(status)
+        if project_ids is not None:
+            if not project_ids:
+                return []
+            placeholders = ",".join("?" for _ in project_ids)
+            conditions.append(f"w.project_id IN ({placeholders})")
+            params.extend(sorted(project_ids))
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        query += " ORDER BY a.created_at DESC"
         with self.db.connect() as connection:
             rows = connection.execute(query, params).fetchall()
         return [dict(row) for row in rows]
 
     def replay(self, run_id: int) -> dict[str, Any]:
         run = self.get_run(run_id, redact_sensitive=False)
-        return self.start_run(run["workflow_id"], run["input"], run_id)
+        return self.start_run(
+            run["workflow_id"],
+            run["input"],
+            run_id,
+            actor_role=run["actor_role"],
+        )
 
     def create_dataset(
         self, project_id: int, name: str, cases: list[dict[str, Any]]
@@ -810,12 +900,23 @@ class AgentOpsService:
         result["cases"] = decode(result["cases"])
         return result
 
-    def list_datasets(self, project_id: int | None = None) -> list[dict[str, Any]]:
+    def list_datasets(
+        self, project_id: int | None = None, project_ids: set[int] | None = None
+    ) -> list[dict[str, Any]]:
         query = "SELECT * FROM datasets"
-        params: tuple[Any, ...] = ()
+        conditions: list[str] = []
+        params: list[Any] = []
         if project_id is not None:
-            query += " WHERE project_id=?"
-            params = (project_id,)
+            conditions.append("project_id=?")
+            params.append(project_id)
+        if project_ids is not None:
+            if not project_ids:
+                return []
+            placeholders = ",".join("?" for _ in project_ids)
+            conditions.append(f"project_id IN ({placeholders})")
+            params.extend(sorted(project_ids))
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
         query += " ORDER BY created_at DESC"
         with self.db.connect() as connection:
             rows = connection.execute(query, params).fetchall()
@@ -826,14 +927,16 @@ class AgentOpsService:
             results.append(item)
         return results
 
-    def evaluate(self, workflow_id: int, dataset_id: int) -> dict[str, Any]:
+    def evaluate(
+        self, workflow_id: int, dataset_id: int, actor_role: str = "admin"
+    ) -> dict[str, Any]:
         workflow = self.get_workflow(workflow_id)
         dataset = self.get_dataset(dataset_id)
         if workflow["project_id"] != dataset["project_id"]:
             raise ConflictError("workflow and dataset must belong to the same project")
         results = []
         for case in dataset["cases"]:
-            created_run = self.start_run(workflow_id, case["input"])
+            created_run = self.start_run(workflow_id, case["input"], actor_role=actor_role)
             run = self.get_run(created_run["id"], redact_sensitive=False)
             actual = run["output"]
             expected = case["expected"]
@@ -953,14 +1056,26 @@ ACTUAL: {encode(actual)}""",
         }
 
     def list_evaluations(
-        self, workflow_id: int | None = None, limit: int = 100
+        self,
+        workflow_id: int | None = None,
+        limit: int = 100,
+        project_ids: set[int] | None = None,
     ) -> list[dict[str, Any]]:
-        query = "SELECT * FROM evaluations"
+        query = "SELECT e.* FROM evaluations e JOIN workflows w ON w.id=e.workflow_id"
+        conditions: list[str] = []
         params: list[Any] = []
         if workflow_id is not None:
-            query += " WHERE workflow_id=?"
+            conditions.append("e.workflow_id=?")
             params.append(workflow_id)
-        query += " ORDER BY created_at DESC LIMIT ?"
+        if project_ids is not None:
+            if not project_ids:
+                return []
+            placeholders = ",".join("?" for _ in project_ids)
+            conditions.append(f"w.project_id IN ({placeholders})")
+            params.extend(sorted(project_ids))
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        query += " ORDER BY e.created_at DESC LIMIT ?"
         params.append(limit)
         with self.db.connect() as connection:
             rows = connection.execute(query, params).fetchall()
@@ -1022,11 +1137,19 @@ ACTUAL: {encode(actual)}""",
         result["enabled"] = bool(result["enabled"])
         return result
 
-    def list_schedules(self) -> list[dict[str, Any]]:
+    def list_schedules(self, project_ids: set[int] | None = None) -> list[dict[str, Any]]:
+        query = """SELECT s.id FROM schedules s
+                   JOIN workflows w ON w.id=s.workflow_id"""
+        params: list[Any] = []
+        if project_ids is not None:
+            if not project_ids:
+                return []
+            placeholders = ",".join("?" for _ in project_ids)
+            query += f" WHERE w.project_id IN ({placeholders})"
+            params.extend(sorted(project_ids))
+        query += " ORDER BY s.created_at DESC"
         with self.db.connect() as connection:
-            rows = connection.execute(
-                "SELECT id FROM schedules ORDER BY created_at DESC"
-            ).fetchall()
+            rows = connection.execute(query, params).fetchall()
         return [self.get_schedule(row["id"]) for row in rows]
 
     def set_schedule_enabled(self, schedule_id: int, enabled: bool) -> dict[str, Any]:
@@ -1081,12 +1204,23 @@ ACTUAL: {encode(actual)}""",
         result["enabled"] = bool(result["enabled"])
         return result
 
-    def list_webhooks(self, project_id: int | None = None) -> list[dict[str, Any]]:
+    def list_webhooks(
+        self, project_id: int | None = None, project_ids: set[int] | None = None
+    ) -> list[dict[str, Any]]:
         query = "SELECT id FROM webhooks"
-        params: tuple[Any, ...] = ()
+        conditions: list[str] = []
+        params: list[Any] = []
         if project_id is not None:
-            query += " WHERE project_id=?"
-            params = (project_id,)
+            conditions.append("project_id=?")
+            params.append(project_id)
+        if project_ids is not None:
+            if not project_ids:
+                return []
+            placeholders = ",".join("?" for _ in project_ids)
+            conditions.append(f"project_id IN ({placeholders})")
+            params.extend(sorted(project_ids))
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
         query += " ORDER BY created_at DESC"
         with self.db.connect() as connection:
             rows = connection.execute(query, params).fetchall()
@@ -1124,7 +1258,7 @@ ACTUAL: {encode(actual)}""",
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=10):  # noqa: S310
+            with urllib.request.urlopen(request, timeout=10):  # noqa: S310  # nosec B310
                 pass
         except (urllib.error.URLError, TimeoutError) as error:
             raise RuntimeError(f"webhook delivery failed: {error}") from error
@@ -1192,6 +1326,13 @@ ACTUAL: {encode(actual)}""",
                 (project_id, user_name),
             ).fetchone()
         return str(row["role"]) if row else None
+
+    def project_ids_for_user(self, user_name: str) -> set[int]:
+        with self.db.connect() as connection:
+            rows = connection.execute(
+                "SELECT project_id FROM project_members WHERE user_name=?", (user_name,)
+            ).fetchall()
+        return {int(row["project_id"]) for row in rows}
 
     def put_secret(self, project_id: int, name: str, value: str) -> dict[str, Any]:
         self.get_project(project_id)
@@ -1264,8 +1405,8 @@ ACTUAL: {encode(actual)}""",
         result["enabled"] = bool(result["enabled"])
         return result
 
-    def list_alerts(self) -> list[dict[str, Any]]:
-        stats = self.stats()
+    def list_alerts(self, project_ids: set[int] | None = None) -> list[dict[str, Any]]:
+        stats = self.stats(project_ids)
         total = stats["total_runs"]
         values = {
             "failure_rate": stats["failed_runs"] / total if total else 0,
@@ -1334,30 +1475,52 @@ ACTUAL: {encode(actual)}""",
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=10):  # noqa: S310
+            with urllib.request.urlopen(request, timeout=10):  # noqa: S310  # nosec B310
                 pass
         except (urllib.error.URLError, TimeoutError):
             return
 
-    def stats(self) -> dict[str, Any]:
+    def stats(self, project_ids: set[int] | None = None) -> dict[str, Any]:
+        run_scope = ""
+        approval_scope = ""
+        span_scope = ""
+        params: list[Any] = []
+        if project_ids is not None:
+            if project_ids:
+                placeholders = ",".join("?" for _ in project_ids)
+                ids = sorted(project_ids)
+                run_scope = f" AND workflow_id IN (SELECT id FROM workflows WHERE project_id IN ({placeholders}))"  # noqa: E501, S608  # nosec B608
+                approval_scope = f" AND run_id IN (SELECT r.id FROM runs r JOIN workflows w ON w.id=r.workflow_id WHERE w.project_id IN ({placeholders}))"  # noqa: E501, S608  # nosec B608
+                span_scope = approval_scope
+                params = ids
+            else:
+                run_scope = approval_scope = span_scope = " AND 1=0"
         with self.db.connect() as connection:
-            total = connection.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
+            total = connection.execute(
+                f"SELECT COUNT(*) FROM runs WHERE 1=1{run_scope}",  # noqa: S608  # nosec B608
+                params,
+            ).fetchone()[0]
             completed = connection.execute(
-                "SELECT COUNT(*) FROM runs WHERE status='completed'"
+                f"SELECT COUNT(*) FROM runs WHERE status='completed'{run_scope}",  # noqa: S608  # nosec B608
+                params,
             ).fetchone()[0]
             failed = connection.execute(
-                "SELECT COUNT(*) FROM runs WHERE status='failed'"
+                f"SELECT COUNT(*) FROM runs WHERE status='failed'{run_scope}",  # noqa: S608  # nosec B608
+                params,
             ).fetchone()[0]
             pending = connection.execute(
-                "SELECT COUNT(*) FROM approvals WHERE status='pending'"
+                f"SELECT COUNT(*) FROM approvals WHERE status='pending'{approval_scope}",  # noqa: S608  # nosec B608
+                params,
             ).fetchone()[0]
             avg_ms = connection.execute(
-                "SELECT COALESCE(AVG(duration_ms),0) FROM spans"
+                f"SELECT COALESCE(AVG(duration_ms),0) FROM spans WHERE 1=1{span_scope}",  # noqa: S608  # nosec B608
+                params,
             ).fetchone()[0]
             usage = connection.execute(
-                """SELECT COALESCE(SUM(input_tokens),0),
-                          COALESCE(SUM(output_tokens),0),COALESCE(SUM(cost_usd),0)
-                   FROM spans"""
+                f"""SELECT COALESCE(SUM(input_tokens),0),
+                           COALESCE(SUM(output_tokens),0),COALESCE(SUM(cost_usd),0)
+                    FROM spans WHERE 1=1{span_scope}""",  # noqa: S608  # nosec B608
+                params,
             ).fetchone()
         return {
             "total_runs": total,
@@ -1371,15 +1534,25 @@ ACTUAL: {encode(actual)}""",
             "total_cost_usd": round(usage[2], 6),
         }
 
-    def trends(self, limit: int = 30) -> list[dict[str, Any]]:
-        with self.db.connect() as connection:
-            rows = connection.execute(
-                """SELECT r.id,r.status,r.started_at,
+    def trends(
+        self, limit: int = 30, project_ids: set[int] | None = None
+    ) -> list[dict[str, Any]]:
+        query = """SELECT r.id,r.status,r.started_at,
                           COALESCE(SUM(s.duration_ms),0) AS duration_ms,
                           COALESCE(SUM(s.cost_usd),0) AS cost_usd
-                   FROM runs r LEFT JOIN spans s ON s.run_id=r.id
-                   GROUP BY r.id,r.status,r.started_at
-                   ORDER BY r.started_at DESC LIMIT ?""",
-                (limit,),
-            ).fetchall()
+                   FROM runs r
+                   JOIN workflows w ON w.id=r.workflow_id
+                   LEFT JOIN spans s ON s.run_id=r.id"""
+        params: list[Any] = []
+        if project_ids is not None:
+            if not project_ids:
+                return []
+            placeholders = ",".join("?" for _ in project_ids)
+            query += f" WHERE w.project_id IN ({placeholders})"
+            params.extend(sorted(project_ids))
+        query += """ GROUP BY r.id,r.status,r.started_at
+                     ORDER BY r.started_at DESC LIMIT ?"""
+        params.append(limit)
+        with self.db.connect() as connection:
+            rows = connection.execute(query, params).fetchall()
         return [dict(row) for row in reversed(rows)]

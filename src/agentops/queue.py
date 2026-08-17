@@ -48,10 +48,12 @@ class RunQueue:
         self.redis.lpush("agentops:runs", run_id)
 
     def _consume(self) -> None:
-        assert self.redis is not None
+        redis = self.redis
+        if redis is None:
+            return
         while not self.stop_event.is_set():
             try:
-                item = self.redis.brpop("agentops:runs", timeout=1)
+                item = redis.brpop("agentops:runs", timeout=1)
                 if item is not None:
                     self.handler(int(item[1]))
             except (RedisError, ValueError):

@@ -79,6 +79,34 @@ def test_workflow_rejects_invalid_tool_empty_steps_and_missing_project(
     )
     assert missing.status_code == 404
 
+    blank_workflow = client.post(
+        "/api/workflows",
+        json={
+            "project_id": project["id"],
+            "name": "   ",
+            "steps": [{"name": "x", "tool": "input"}],
+        },
+    )
+    assert blank_workflow.status_code == 422
+    blank_step = client.post(
+        "/api/workflows",
+        json={
+            "project_id": project["id"],
+            "name": "Blank step",
+            "steps": [{"name": "   ", "tool": "input"}],
+        },
+    )
+    assert blank_step.status_code == 422
+    invalid_runtime_config = client.post(
+        "/api/workflows",
+        json={
+            "project_id": project["id"],
+            "name": "Bad retries",
+            "steps": [{"name": "Run", "tool": "input", "config": {"retries": None}}],
+        },
+    )
+    assert invalid_runtime_config.status_code == 422
+
 
 def test_successful_run_records_ordered_trace(client: TestClient, project: dict):
     workflow = create_workflow(
@@ -431,3 +459,42 @@ def test_project_export_and_import(client: TestClient, project: dict):
     assert imported.json()["project"]["name"] == "Imported copy"
     assert len(imported.json()["workflow_ids"]) == 1
     assert len(imported.json()["dataset_ids"]) == 1
+
+
+def test_project_import_remaps_handoff_workflow_ids(client: TestClient, project: dict):
+    child = create_workflow(
+        client,
+        project["id"],
+        [{"name": "Normalize", "tool": "uppercase"}],
+        "Portable child",
+    )
+    create_workflow(
+        client,
+        project["id"],
+        [
+            {
+                "name": "Delegate",
+                "tool": "handoff",
+                "config": {"workflow_id": child["id"]},
+            }
+        ],
+        "Portable parent",
+    )
+    package = client.get(f"/api/projects/{project['id']}/export").json()
+    assert all(workflow["source_id"] for workflow in package["workflows"])
+
+    imported = client.post(
+        "/api/projects/import", json={"package": package, "name": "Imported handoff"}
+    )
+    assert imported.status_code == 201
+    imported_project_id = imported.json()["project"]["id"]
+    workflows = client.get(f"/api/workflows?project_id={imported_project_id}").json()
+    by_name = {workflow["name"]: workflow for workflow in workflows}
+    imported_child = by_name["Portable child"]
+    imported_parent = by_name["Portable parent"]
+    assert imported_parent["steps"][0]["config"]["workflow_id"] == imported_child["id"]
+    run = client.post(
+        f"/api/workflows/{imported_parent['id']}/runs", json={"input": "portable"}
+    ).json()
+    assert run["status"] == "completed"
+    assert run["output"] == "PORTABLE"

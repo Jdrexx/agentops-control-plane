@@ -77,6 +77,8 @@ def create_app(database_path: str | None = None) -> FastAPI:
             "/.well-known/security.txt",
         } or request.url.path.startswith("/static/")
         actor = Actor("local-user", "admin")
+        authenticated_request = False
+        response = None
         if not public and authenticator.enabled():
             authorization = request.headers.get("Authorization", "")
             token = (
@@ -84,33 +86,57 @@ def create_app(database_path: str | None = None) -> FastAPI:
             )
             authenticated = authenticator.authenticate(token) if token else None
             if authenticated is None:
-                return JSONResponse({"detail": "valid bearer token required"}, status_code=401)
-            actor = authenticated
-        if not public:
+                response = JSONResponse({"detail": "valid bearer token required"}, status_code=401)
+            else:
+                actor = authenticated
+                authenticated_request = True
+        elif not public:
+            authenticated_request = True
+        if not public and response is None:
             request.state.actor = actor
             if request.method not in {"GET", "HEAD", "OPTIONS"} and actor.role == "viewer":
-                return JSONResponse({"detail": "viewer role is read-only"}, status_code=403)
+                response = JSONResponse({"detail": "viewer role is read-only"}, status_code=403)
             admin_path = request.url.path.startswith(
-                ("/api/users", "/api/secrets", "/api/audit", "/api/project-members")
+                (
+                    "/api/users",
+                    "/api/secrets",
+                    "/api/audit",
+                    "/api/project-members",
+                    "/api/webhooks",
+                    "/api/alerts",
+                    "/api/approvals/expire",
+                    "/api/schedules/run-due",
+                )
             )
-            if admin_path and actor.role != "admin":
-                return JSONResponse({"detail": "admin role required"}, status_code=403)
-            timestamp = time.monotonic()
-            with rate_lock:
-                bucket = rate_buckets[actor.name]
-                while bucket and bucket[0] < timestamp - 60:
-                    bucket.popleft()
-                if len(bucket) >= 240:
-                    return JSONResponse({"detail": "request rate limit exceeded"}, status_code=429)
-                bucket.append(timestamp)
-        response = await call_next(request)
+            if response is None and admin_path and actor.role != "admin":
+                response = JSONResponse({"detail": "admin role required"}, status_code=403)
+            if response is None:
+                timestamp = time.monotonic()
+                with rate_lock:
+                    bucket = rate_buckets[actor.name]
+                    while bucket and bucket[0] < timestamp - 60:
+                        bucket.popleft()
+                    if len(bucket) >= 240:
+                        response = JSONResponse(
+                            {"detail": "request rate limit exceeded"}, status_code=429
+                        )
+                    else:
+                        bucket.append(timestamp)
+        if response is None:
+            response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Content-Security-Policy"] = "default-src 'self'; style-src 'self'"
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-        if not public and request.method not in {"GET", "HEAD", "OPTIONS"}:
+        if not public:
+            response.headers["Cache-Control"] = "no-store"
+        if (
+            not public
+            and authenticated_request
+            and request.method not in {"GET", "HEAD", "OPTIONS"}
+        ):
             service(request).audit(
                 actor.name, request.method, request.url.path, response.status_code
             )
@@ -171,11 +197,13 @@ def create_app(database_path: str | None = None) -> FastAPI:
 
     @app.post("/api/projects", status_code=201)
     def create_project(body: ProjectCreate, request: Request):
-        return service(request).create_project(body.name, body.description)
+        project = service(request).create_project(body.name, body.description)
+        grant_created_project(request, project["id"])
+        return project
 
     @app.get("/api/projects")
     def projects(request: Request):
-        return service(request).list_projects()
+        return service(request).list_projects(actor_project_ids(request))
 
     @app.get("/api/projects/{project_id}")
     def project(project_id: int, request: Request):
@@ -189,7 +217,9 @@ def create_app(database_path: str | None = None) -> FastAPI:
 
     @app.post("/api/projects/import", status_code=201)
     def import_project(body: ProjectImport, request: Request):
-        return service(request).import_project(body.package, body.name)
+        imported = service(request).import_project(body.package.model_dump(), body.name)
+        grant_created_project(request, imported["project"]["id"])
+        return imported
 
     @app.post("/api/workflows", status_code=201)
     def create_workflow(body: WorkflowCreate, request: Request):
@@ -202,7 +232,7 @@ def create_app(database_path: str | None = None) -> FastAPI:
     def workflows(request: Request, project_id: int | None = None):
         if project_id is not None:
             require_project_access(request, project_id)
-        return service(request).list_workflows(project_id)
+        return service(request).list_workflows(project_id, actor_project_ids(request))
 
     @app.get("/api/workflows/{workflow_id}")
     def workflow(workflow_id: int, request: Request):
@@ -293,36 +323,47 @@ def create_app(database_path: str | None = None) -> FastAPI:
         workflow_id: int | None = None,
         limit: int = Query(default=100, ge=1, le=500),
     ):
-        return service(request).list_runs(workflow_id, limit)
+        if workflow_id is not None:
+            require_workflow_access(request, workflow_id)
+        return service(request).list_runs(
+            workflow_id, limit, project_ids=actor_project_ids(request)
+        )
 
     @app.get("/api/runs/{run_id}")
     def run(run_id: int, request: Request):
+        require_run_access(request, run_id)
         return service(request).get_run(run_id)
 
     @app.get("/api/runs/{left_id}/compare/{right_id}")
     def compare_runs(left_id: int, right_id: int, request: Request):
+        require_run_access(request, left_id)
+        require_run_access(request, right_id)
         return service(request).compare_runs(left_id, right_id)
 
     @app.post("/api/runs/{run_id}/replay", status_code=201)
     def replay(run_id: int, request: Request):
+        require_run_access(request, run_id, write=True)
         return service(request).replay(run_id)
 
     @app.post("/api/runs/{run_id}/cancel")
     def cancel_run(run_id: int, request: Request):
+        require_run_access(request, run_id, write=True)
         return service(request).cancel_run(run_id)
 
     @app.post("/api/schedules", status_code=201)
     def create_schedule(body: ScheduleCreate, request: Request):
+        require_workflow_access(request, body.workflow_id, write=True)
         return service(request).create_schedule(
             body.workflow_id, body.name, body.input, body.interval_seconds
         )
 
     @app.get("/api/schedules")
     def schedules(request: Request):
-        return service(request).list_schedules()
+        return service(request).list_schedules(actor_project_ids(request))
 
     @app.post("/api/schedules/{schedule_id}/enabled")
     def set_schedule_enabled(schedule_id: int, enabled: bool, request: Request):
+        require_schedule_access(request, schedule_id, write=True)
         return service(request).set_schedule_enabled(schedule_id, enabled)
 
     @app.post("/api/schedules/run-due")
@@ -331,20 +372,24 @@ def create_app(database_path: str | None = None) -> FastAPI:
 
     @app.post("/api/webhooks", status_code=201)
     def create_webhook(body: WebhookCreate, request: Request):
+        require_project_access(request, body.project_id, write=True)
         return service(request).create_webhook(body.project_id, body.url, body.events)
 
     @app.get("/api/webhooks")
     def webhooks(request: Request, project_id: int | None = None):
-        return service(request).list_webhooks(project_id)
+        if project_id is not None:
+            require_project_access(request, project_id)
+        return service(request).list_webhooks(project_id, actor_project_ids(request))
 
     @app.get("/api/approvals")
     def approvals(request: Request, status: str | None = None):
         if status not in {None, "pending", "approved", "rejected", "expired"}:
             raise HTTPException(422, "invalid approval status")
-        return service(request).list_approvals(status)
+        return service(request).list_approvals(status, actor_project_ids(request))
 
     @app.post("/api/approvals/{approval_id}/decision")
     def decide(approval_id: int, body: ApprovalDecision, request: Request):
+        require_approval_access(request, approval_id, write=True)
         return service(request).decide_approval(
             approval_id,
             body.decision,
@@ -355,6 +400,7 @@ def create_app(database_path: str | None = None) -> FastAPI:
 
     @app.post("/api/approvals/{approval_id}/escalate")
     def escalate(approval_id: int, request: Request, note: str = ""):
+        require_approval_access(request, approval_id, write=True)
         return service(request).escalate_approval(approval_id, note)
 
     @app.post("/api/approvals/expire")
@@ -363,21 +409,29 @@ def create_app(database_path: str | None = None) -> FastAPI:
 
     @app.post("/api/datasets", status_code=201)
     def create_dataset(body: DatasetCreate, request: Request):
+        require_project_access(request, body.project_id, write=True)
         return service(request).create_dataset(
             body.project_id, body.name, [case.model_dump() for case in body.cases]
         )
 
     @app.get("/api/datasets")
     def datasets(request: Request, project_id: int | None = None):
-        return service(request).list_datasets(project_id)
+        if project_id is not None:
+            require_project_access(request, project_id)
+        return service(request).list_datasets(project_id, actor_project_ids(request))
 
     @app.get("/api/datasets/{dataset_id}")
     def dataset(dataset_id: int, request: Request):
+        require_dataset_access(request, dataset_id)
         return service(request).get_dataset(dataset_id)
 
     @app.post("/api/evaluations", status_code=201)
     def evaluate(body: EvaluationCreate, request: Request):
-        return service(request).evaluate(body.workflow_id, body.dataset_id)
+        require_workflow_access(request, body.workflow_id, write=True)
+        require_dataset_access(request, body.dataset_id, write=True)
+        return service(request).evaluate(
+            body.workflow_id, body.dataset_id, actor_role=request.state.actor.role
+        )
 
     @app.get("/api/evaluations")
     def evaluations(
@@ -385,41 +439,63 @@ def create_app(database_path: str | None = None) -> FastAPI:
         workflow_id: int | None = None,
         limit: int = Query(default=100, ge=1, le=500),
     ):
-        return service(request).list_evaluations(workflow_id, limit)
+        if workflow_id is not None:
+            require_workflow_access(request, workflow_id)
+        return service(request).list_evaluations(
+            workflow_id, limit, project_ids=actor_project_ids(request)
+        )
 
     @app.get("/api/evaluations/{evaluation_id}")
     def evaluation(evaluation_id: int, request: Request):
+        require_evaluation_access(request, evaluation_id)
         return service(request).get_evaluation(evaluation_id)
 
     @app.get("/api/evaluations/{left_id}/compare/{right_id}")
     def compare_evaluations(left_id: int, right_id: int, request: Request):
+        require_evaluation_access(request, left_id)
+        require_evaluation_access(request, right_id)
         return service(request).compare_evaluations(left_id, right_id)
 
     @app.get("/api/stats")
     def stats(request: Request):
-        return service(request).stats()
+        return service(request).stats(actor_project_ids(request))
 
     @app.get("/api/stats/trends")
     def trends(request: Request, limit: int = Query(default=30, ge=1, le=200)):
-        return service(request).trends(limit)
+        return service(request).trends(limit, actor_project_ids(request))
 
     @app.websocket("/api/live")
     async def live(websocket: WebSocket):
+        actor = Actor("local-user", "admin")
+        await websocket.accept()
         if authenticator.enabled():
-            actor = authenticator.authenticate(websocket.query_params.get("token", ""))
-            if actor is None:
+            try:
+                message = await asyncio.wait_for(websocket.receive_json(), timeout=5)
+            except (TimeoutError, ValueError, WebSocketDisconnect):
                 await websocket.close(code=4401)
                 return
-        await websocket.accept()
+            token = message.get("token", "") if isinstance(message, dict) else ""
+            authenticated = authenticator.authenticate(token)
+            if authenticated is None:
+                await websocket.close(code=4401)
+                return
+            actor = authenticated
+        project_ids = (
+            None
+            if actor.role == "admin"
+            else app.state.service.project_ids_for_user(actor.name)
+        )
         try:
             while True:
                 current_service = websocket.app.state.service
                 await websocket.send_json(
                     {
-                        "stats": current_service.stats(),
-                        "runs": current_service.list_runs(limit=20),
-                        "alerts": current_service.list_alerts(),
-                        "events": current_service.list_agent_events(limit=100),
+                        "stats": current_service.stats(project_ids),
+                        "runs": current_service.list_runs(limit=20, project_ids=project_ids),
+                        "alerts": current_service.list_alerts(project_ids),
+                        "events": current_service.list_agent_events(
+                            limit=100, project_ids=project_ids
+                        ),
                     }
                 )
                 await asyncio.sleep(1)
@@ -428,6 +504,7 @@ def create_app(database_path: str | None = None) -> FastAPI:
 
     @app.get("/api/runs/{run_id}/otel")
     def otel_trace(run_id: int, request: Request):
+        require_run_access(request, run_id)
         return service(request).otel_trace(run_id)
 
     @app.post("/api/alerts", status_code=201)
@@ -440,6 +517,7 @@ def create_app(database_path: str | None = None) -> FastAPI:
 
     @app.get("/api/runs/{run_id}/agent-tree")
     def agent_tree(run_id: int, request: Request):
+        require_run_access(request, run_id)
         return service(request).agent_tree(run_id)
 
     @app.put("/api/memories")
@@ -493,6 +571,19 @@ def service(request: Request) -> AgentOpsService:
     return request.app.state.service
 
 
+def actor_project_ids(request: Request) -> set[int] | None:
+    actor: Actor = request.state.actor
+    if actor.role == "admin":
+        return None
+    return service(request).project_ids_for_user(actor.name)
+
+
+def grant_created_project(request: Request, project_id: int) -> None:
+    actor: Actor = request.state.actor
+    if actor.role != "admin":
+        service(request).put_project_member(project_id, actor.name, "operator")
+
+
 def require_project_access(request: Request, project_id: int, write: bool = False) -> None:
     actor: Actor = request.state.actor
     if actor.role == "admin":
@@ -507,6 +598,31 @@ def require_project_access(request: Request, project_id: int, write: bool = Fals
 def require_workflow_access(request: Request, workflow_id: int, write: bool = False) -> None:
     workflow = service(request).get_workflow(workflow_id)
     require_project_access(request, workflow["project_id"], write)
+
+
+def require_run_access(request: Request, run_id: int, write: bool = False) -> None:
+    run = service(request).get_run(run_id)
+    require_workflow_access(request, run["workflow_id"], write)
+
+
+def require_approval_access(request: Request, approval_id: int, write: bool = False) -> None:
+    approval = service(request).list_approvals_by_id(approval_id)
+    require_run_access(request, approval["run_id"], write)
+
+
+def require_dataset_access(request: Request, dataset_id: int, write: bool = False) -> None:
+    dataset = service(request).get_dataset(dataset_id)
+    require_project_access(request, dataset["project_id"], write)
+
+
+def require_evaluation_access(request: Request, evaluation_id: int) -> None:
+    evaluation = service(request).get_evaluation(evaluation_id)
+    require_workflow_access(request, evaluation["workflow_id"])
+
+
+def require_schedule_access(request: Request, schedule_id: int, write: bool = False) -> None:
+    schedule = service(request).get_schedule(schedule_id)
+    require_workflow_access(request, schedule["workflow_id"], write)
 
 
 def _error(status_code: int, message: str):
