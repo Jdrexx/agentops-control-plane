@@ -14,7 +14,20 @@ jobs:
     steps:
       - name: Verify production dependencies
         run: |
-          response="$(curl --fail --silent --show-error --retry 3 \
-            https://agentops-control-plane-production.up.railway.app/api/ready)"
-          echo "$response" | jq -e \
+          base_url="https://agentops-control-plane-production.up.railway.app"
+
+          health="$(curl --fail --silent --show-error --retry 3 \
+            "$base_url/api/health")"
+          echo "$health" | jq -e \
+            '.status == "ok" and (.version | length > 0)'
+
+          ready="$(curl --fail --silent --show-error --retry 3 \
+            "$base_url/api/ready")"
+          echo "$ready" | jq -e \
             '.status == "ready" and .database == "ok" and .queue == "redis"'
+
+          session_headers="$(curl --silent --show-error --dump-header - \
+            --output /dev/null "$base_url/api/session")"
+          echo "$session_headers" | grep -Eiq '^HTTP/[0-9.]+ 401'
+          echo "$session_headers" | grep -Eiq '^cache-control: no-store'
+          echo "$session_headers" | grep -Eiq '^x-content-type-options: nosniff'

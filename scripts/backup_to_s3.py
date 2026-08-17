@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
-import subprocess
+import subprocess  # nosec B404
 import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -38,7 +38,8 @@ def main() -> None:
     key = f"postgres/agentops-{timestamp}.dump"
     with tempfile.TemporaryDirectory(prefix="agentops-backup-") as directory:
         backup = Path(directory) / "agentops.dump"
-        subprocess.run(  # noqa: S603 -- fixed binary and argument vector, no shell.
+        # Fixed pg_dump binary and argument vector; shell execution is disabled.
+        subprocess.run(  # noqa: S603  # nosec B603
             [
                 "/usr/bin/pg_dump",
                 "--format=custom",
