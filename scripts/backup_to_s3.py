@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-# Fixed pg_dump binary and argument vector; shell execution is disabled.
 import subprocess  # nosec B404
 import tempfile
 from datetime import UTC, datetime, timedelta
