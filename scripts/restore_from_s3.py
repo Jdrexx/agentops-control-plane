@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import os
-import subprocess
+# Fixed pg_restore binary and argument vector; shell execution is disabled.
+import subprocess  # nosec B404
 import tempfile
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -53,7 +54,8 @@ def main() -> None:
         checksum = hashlib.sha256(backup.read_bytes()).hexdigest()
         if checksum != expected_checksum:
             raise RuntimeError("backup checksum verification failed")
-        subprocess.run(  # noqa: S603 -- fixed binary and argument vector, no shell.
+        # Fixed pg_restore binary and argument vector; shell execution is disabled.
+        subprocess.run(  # noqa: S603  # nosec B603
             [
                 "/usr/bin/pg_restore",
                 "--clean",
