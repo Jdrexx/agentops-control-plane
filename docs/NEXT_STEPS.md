@@ -8,9 +8,16 @@ ongoing cost.
 
 - A reviewer can launch the complete application with one Docker Compose command.
 - SQLite, the in-process queue, and the built-in scheduler require no external services.
-- The dashboard includes a one-click demo workflow and works without provider keys.
+- The dashboard offers three one-click offline demo scenarios (support tour,
+  regression check, incident) on a deterministic mock provider — no keys, no
+  network, no Ollama download.
+- The Quality Lab is fully operable from the dashboard: dataset creation,
+  queued evaluations with progress and cancellation, release gates, and
+  case-level regression diffs.
 - PostgreSQL, Redis, separated process modes, telemetry, notifications, and S3-compatible
   backups remain visible as portable extension points.
+- Schema changes are versioned migrations applied under a cross-process lock on
+  both SQLite and PostgreSQL.
 - CI runs linting, tests with an 85% coverage floor, JavaScript validation, and a
   production-container build.
 
@@ -18,28 +25,29 @@ ongoing cost.
 
 ### 1. Add visual proof to the README
 
-- Capture a concise dashboard screenshot with the demo workflow loaded.
-- Record a short GIF showing a run, its step trace, replay, and evaluation results.
-- Keep all example data synthetic and remove API keys, tokens, and local paths.
+- [x] Capability matrix and Mermaid architecture diagram in the README.
+- [x] Three offline demo scenarios replace the old single seed workflow.
+- [ ] Record a short GIF showing a run, its step trace, replay, and evaluation results.
+- [ ] Keep all example data synthetic and remove API keys, tokens, and local paths.
 
 Done when a reviewer can understand the product in under a minute without installing it.
 
 ### 2. Create a five-minute walkthrough
 
-- Explain the user problem and target operator.
-- Run the built-in demo workflow.
-- Show approval, replay, evaluation, and cost/latency observability.
-- Close with the architecture boundary and production scaling path.
+- [ ] Explain the user problem and target operator.
+- [x] Run the built-in demo workflow (three scenarios).
+- [ ] Show approval, replay, evaluation, and cost/latency observability.
+- [ ] Close with the architecture boundary and production scaling path.
 
 Done when the walkthrough is repeatable without a cloud deployment or live paid model
 call.
 
 ### 3. Make reviewer setup nearly automatic
 
-- Keep `docker compose up --build agentops` as the canonical command.
-- Add a smoke check for the Compose-based SQLite configuration.
-- Verify setup on a clean machine and record the expected startup time.
-- Keep the seed action idempotent so repeat demonstrations stay tidy.
+- [x] Keep `docker compose up --build agentops` as the canonical command.
+- [ ] Add a smoke check for the Compose-based SQLite configuration.
+- [ ] Verify setup on a clean machine and record the expected startup time.
+- [x] Keep the seed action idempotent so repeat demonstrations stay tidy.
 
 Done when a new reviewer can reach the dashboard and complete the demo using only the
 README.
