@@ -60,6 +60,7 @@ def create_app(database_path: str | None = None) -> FastAPI:
         )
         if process_mode in {"all", "worker"}:
             app.state.service.recover_incomplete_runs()
+            app.state.service.start_outbox_worker()
         if process_mode in {"all", "scheduler"}:
             app.state.service.start_scheduler()
         yield
@@ -105,6 +106,7 @@ def create_app(database_path: str | None = None) -> FastAPI:
                     "/api/audit",
                     "/api/project-members",
                     "/api/webhooks",
+                    "/api/outbox",
                     "/api/alerts",
                     "/api/approvals/expire",
                     "/api/schedules/run-due",
@@ -397,13 +399,24 @@ def create_app(database_path: str | None = None) -> FastAPI:
     @app.post("/api/webhooks", status_code=201)
     def create_webhook(body: WebhookCreate, request: Request):
         require_project_access(request, body.project_id, write=True)
-        return service(request).create_webhook(body.project_id, body.url, body.events)
+        try:
+            return service(request).create_webhook(body.project_id, body.url, body.events)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
 
     @app.get("/api/webhooks")
     def webhooks(request: Request, project_id: int | None = None):
         if project_id is not None:
             require_project_access(request, project_id)
         return service(request).list_webhooks(project_id, actor_project_ids(request))
+
+    @app.get("/api/outbox")
+    def outbox(
+        request: Request,
+        status: str | None = None,
+        limit: int = Query(default=100, ge=1, le=500),
+    ):
+        return service(request).list_outbox(status, limit)
 
     @app.get("/api/approvals")
     def approvals(request: Request, status: str | None = None):

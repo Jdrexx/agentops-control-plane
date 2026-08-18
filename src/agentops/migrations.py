@@ -110,12 +110,35 @@ def _m_0005_evaluation_progress(connection: Any, dialect: str) -> None:
             connection.execute(f"ALTER TABLE evaluations ADD COLUMN {name} {definition}")
 
 
+def _m_0006_outbox(connection: Any, dialect: str) -> None:
+    id_type = (
+        "BIGSERIAL PRIMARY KEY" if dialect == "postgres" else "INTEGER PRIMARY KEY AUTOINCREMENT"
+    )
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS outbox_events ("
+        f" id {id_type},"
+        " event TEXT NOT NULL,"
+        " destination TEXT NOT NULL,"
+        " payload TEXT NOT NULL,"
+        " status TEXT NOT NULL DEFAULT 'pending',"
+        " attempts INTEGER NOT NULL DEFAULT 0,"
+        " next_attempt_at TEXT,"
+        " last_error TEXT,"
+        " idempotency_key TEXT NOT NULL UNIQUE,"
+        " created_at TEXT NOT NULL)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_outbox_due ON outbox_events(status, next_attempt_at)"
+    )
+
+
 MIGRATIONS: list[Migration] = [
     ("0001_initial", _m_0001_initial),
     ("0002_approval_expiry", _m_0002_approval_expiry),
     ("0003_span_cost_columns", _m_0003_span_cost_columns),
     ("0004_run_controls", _m_0004_run_controls),
     ("0005_evaluation_progress", _m_0005_evaluation_progress),
+    ("0006_outbox", _m_0006_outbox),
 ]
 
 
