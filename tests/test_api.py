@@ -131,6 +131,37 @@ def test_successful_run_records_ordered_trace(client: TestClient, project: dict)
     assert all(span["duration_ms"] >= 0 for span in run["spans"])
 
 
+def test_llm_step_runs_offline_with_mock_provider(client: TestClient, project: dict):
+    workflow = create_workflow(
+        client,
+        project["id"],
+        [
+            {
+                "name": "Draft",
+                "tool": "llm",
+                "config": {
+                    "provider": "mock",
+                    "model": "mock-small",
+                    "prompt": "Draft a reply to: {value}",
+                },
+            },
+        ],
+    )
+    first = client.post(
+        f"/api/workflows/{workflow['id']}/runs", json={"input": "customer"}
+    ).json()
+    second = client.post(
+        f"/api/workflows/{workflow['id']}/runs", json={"input": "customer"}
+    ).json()
+    assert first["status"] == "completed"
+    assert first["output"] == second["output"]
+    assert "[mock:" in first["output"]
+    assert first["spans"][0]["tool"] == "llm"
+    assert first["spans"][0]["input_tokens"] >= 1
+    providers = {item["name"]: item for item in client.get("/api/providers").json()}
+    assert providers["mock"]["configured"] is True
+
+
 def test_failure_is_terminal_and_trace_contains_error(client: TestClient, project: dict):
     workflow = create_workflow(
         client,
@@ -393,6 +424,7 @@ def test_llm_tool_uses_provider_boundary(client: TestClient, project: dict):
     assert run["output"] == "model response"
     assert calls == [("openai", "test-model", "Question: hello", "Be concise")]
     assert {item["name"] for item in client.get("/api/providers").json()} == {
+        "mock",
         "ollama",
         "openai",
         "anthropic",

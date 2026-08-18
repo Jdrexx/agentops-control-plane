@@ -5,7 +5,7 @@
 - **FastAPI application:** validation, authentication and role enforcement, secure headers, rate limiting, REST APIs, WebSocket updates, and the static dashboard.
 - **AgentOps service:** immutable workflow versions, execution state transitions, evaluations, approvals, schedules, webhooks, memory, handoffs, telemetry, secrets, and audit records.
 - **Provider registry:** normalized Ollama, OpenAI, and Anthropic text generation through a single boundary.
-- **Database compatibility layer:** SQLite for personal operation and PostgreSQL for larger or multi-service deployments. Bound parameters are retained across both drivers.
+- **Database compatibility layer:** SQLite for personal operation and PostgreSQL for larger or multi-service deployments. Bound parameters are retained across both drivers. Schema changes are versioned migrations (a `schema_migrations` ledger) applied under a cross-process lock — `BEGIN IMMEDIATE` on SQLite, `pg_advisory_lock` on PostgreSQL — so web, worker, and scheduler processes starting against the same database cannot race DDL.
 - **Worker and scheduler:** a bounded local thread pool executes queued runs; a scheduler dispatches due schedules and expires approvals. Queued and interrupted running work is recovered on startup.
 
 ## Run state model
