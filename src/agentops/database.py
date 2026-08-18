@@ -252,39 +252,10 @@ class Database:
     def initialize(self) -> None:
         if not self.is_postgres:
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-        with self.connect() as connection:
-            schema = (
-                SCHEMA.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "BIGSERIAL PRIMARY KEY")
-                if self.is_postgres
-                else SCHEMA
-            )
-            connection.executescript(schema)
-            if self.is_postgres:
-                return
-            columns = {row["name"] for row in connection.execute("PRAGMA table_info(approvals)")}
-            if "expires_at" not in columns:
-                connection.execute("ALTER TABLE approvals ADD COLUMN expires_at TEXT")
-            if "escalation_level" not in columns:
-                connection.execute(
-                    "ALTER TABLE approvals ADD COLUMN escalation_level INTEGER NOT NULL DEFAULT 0"
-                )
-            span_columns = {row["name"] for row in connection.execute("PRAGMA table_info(spans)")}
-            for name, definition in {
-                "input_tokens": "INTEGER NOT NULL DEFAULT 0",
-                "output_tokens": "INTEGER NOT NULL DEFAULT 0",
-                "cost_usd": "REAL NOT NULL DEFAULT 0",
-            }.items():
-                if name not in span_columns:
-                    connection.execute(f"ALTER TABLE spans ADD COLUMN {name} {definition}")
-            run_columns = {row["name"] for row in connection.execute("PRAGMA table_info(runs)")}
-            if "max_steps" not in run_columns:
-                connection.execute(
-                    "ALTER TABLE runs ADD COLUMN max_steps INTEGER NOT NULL DEFAULT 100"
-                )
-            if "actor_role" not in run_columns:
-                connection.execute(
-                    "ALTER TABLE runs ADD COLUMN actor_role TEXT NOT NULL DEFAULT 'admin'"
-                )
+        # Local import: migrations.py imports SCHEMA from this module.
+        from .migrations import migrate
+
+        migrate(self)
 
     def ready(self) -> bool:
         """Return whether the configured database accepts a simple query."""

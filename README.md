@@ -83,6 +83,14 @@ Neither configuration depends on a particular hosting provider.
 
 Every step configuration may include `retries`, `retry_delay_seconds`, `timeout_seconds`, and `allowed_roles`. LLM steps also accept provider, model, system, prompt, and optional per-1K-token cost rates. Approval steps accept a prompt and `expires_in_seconds`.
 
+A built-in deterministic `mock` provider (model `mock-small`) generates byte-identical
+offline output with no key and no network — useful for demos, tests, and CI. It
+streams with paced chunks (`AGENTOPS_MOCK_CHUNK_MS`, default 35), honors a fixed
+latency (`AGENTOPS_MOCK_LATENCY_MS`), and loads pinned responses from
+`AGENTOPS_MOCK_SCRIPT_DIR` (default `examples/mock_responses/`) so a scenario can
+guarantee exact output. See `examples/mock_responses/README.md` for the pinning
+workflow.
+
 ## Quality checks
 
 ```bash

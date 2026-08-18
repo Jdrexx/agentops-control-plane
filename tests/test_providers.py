@@ -2,7 +2,55 @@ import json
 
 import pytest
 
-from src.agentops.providers import ProviderError, ProviderRegistry
+from src.agentops.providers import ProviderError, ProviderRegistry, _mock_fingerprint
+
+
+def test_mock_provider_is_deterministic_and_offline():
+    registry = ProviderRegistry()
+    prompt = "Please summarize the invoice issue"
+    first = registry.generate("mock", "mock-small", prompt)
+    second = registry.generate("mock", "mock-small", prompt)
+    assert first == second
+    assert "[mock:" in first
+    assert len(first) > 20
+
+
+def test_mock_provider_defaults_model_and_accepts_unknown_models():
+    registry = ProviderRegistry()
+    assert registry.generate("mock", "", "hello")
+    assert registry.generate("mock", "any-custom-model", "hello")
+
+
+def test_mock_provider_streams_chunks_that_reconstruct_output(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("AGENTOPS_MOCK_CHUNK_MS", "0")
+    chunks: list[str] = []
+    result = ProviderRegistry().generate(
+        "mock", "mock-small", "two word prompt", on_chunk=chunks.append
+    )
+    assert chunks
+    assert "".join(chunks) == result
+
+
+def test_mock_provider_uses_pinned_script(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    monkeypatch.setenv("AGENTOPS_MOCK_SCRIPT_DIR", str(tmp_path))
+    monkeypatch.setenv("AGENTOPS_MOCK_CHUNK_MS", "0")
+    fingerprint = _mock_fingerprint("mock-small", "", "pinned prompt")
+    (tmp_path / f"{fingerprint[:16]}.txt").write_text("PINNED RESPONSE")
+    assert ProviderRegistry().generate("mock", "mock-small", "pinned prompt") == "PINNED RESPONSE"
+
+
+def test_mock_provider_different_prompts_differ():
+    registry = ProviderRegistry()
+    assert registry.generate("mock", "mock-small", "question one") != registry.generate(
+        "mock", "mock-small", "question two"
+    )
+
+
+def test_mock_provider_reported_configured_and_local():
+    statuses = {item["name"]: item for item in ProviderRegistry().status()}
+    assert statuses["mock"]["configured"] is True
+    assert statuses["mock"]["local"] is True
+    assert statuses["mock"]["default_model"] == "mock-small"
 
 
 def test_provider_requires_key(monkeypatch: pytest.MonkeyPatch):
