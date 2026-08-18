@@ -46,10 +46,17 @@ def _mock_answer(model: str, system: str, prompt: str, script_dir: Path) -> str:
 
     A pinned script at ``<script_dir>/<fingerprint[:16]>.txt`` wins when present,
     so demos and tests can guarantee exact output (e.g. an evaluation that fails
-    on workflow v1 and passes on v2). Unpinned prompts fall back to stable
-    synthetic filler derived from the fingerprint.
+    on workflow v1 and passes on v2). A ``<fingerprint[:16]>.fail`` file raises a
+    deterministic ``ProviderError`` with the file contents as the message —
+    offline failure injection for incident demos and retry-path tests. Unpinned
+    prompts fall back to stable synthetic filler derived from the fingerprint.
     """
     fingerprint = _mock_fingerprint(model, system, prompt)
+    fail_script = script_dir / f"{fingerprint[:16]}.fail"
+    if fail_script.is_file():
+        raise ProviderError(
+            fail_script.read_text(encoding="utf-8").strip() or "simulated provider outage"
+        )
     pinned = script_dir / f"{fingerprint[:16]}.txt"
     if pinned.is_file():
         return pinned.read_text(encoding="utf-8").strip()

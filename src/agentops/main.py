@@ -13,10 +13,12 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from .database import Database
+from .demo import seed as seed_demo
 from .schemas import (
     AlertCreate,
     ApprovalDecision,
     DatasetCreate,
+    DemoSeedRequest,
     EvaluationCreate,
     MemoryCreate,
     ProjectCreate,
@@ -209,6 +211,28 @@ def create_app(database_path: str | None = None) -> FastAPI:
     def project(project_id: int, request: Request):
         require_project_access(request, project_id)
         return service(request).get_project(project_id)
+
+    @app.delete("/api/projects/{project_id}")
+    def delete_project(project_id: int, request: Request):
+        require_project_access(request, project_id, write=True)
+        service(request).delete_project(project_id)
+        return {"deleted": project_id}
+
+    @app.post("/api/demo/seed", status_code=201)
+    def demo_seed(body: DemoSeedRequest, request: Request):
+        if os.getenv("AGENTOPS_DEMO_ENABLED", "1") != "1":
+            raise HTTPException(404, "demo scenarios are disabled")
+        try:
+            result = seed_demo(service(request), body.scenario, reset=body.reset)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        if body.scenario == "tour" and result.get("next_action") == "approve":
+            pending = service(request).list_approvals("pending")
+            result["approval_id"] = next(
+                (item["id"] for item in pending if item["run_id"] == result["focus_run_id"]),
+                None,
+            )
+        return result
 
     @app.get("/api/projects/{project_id}/export")
     def export_project(project_id: int, request: Request):

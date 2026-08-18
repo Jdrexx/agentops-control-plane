@@ -29,10 +29,24 @@ The fastest way to review the complete application is Docker Compose:
 docker compose up --build agentops
 ```
 
-Open <http://127.0.0.1:8110> and select **Load demo workflow**. The demo uses SQLite,
-keeps its data in the local `agentops-data` Docker volume, and runs queued work in the
-application process. No PostgreSQL, Redis, cloud account, or model-provider key is
-required for the built-in workflow tools.
+Open <http://127.0.0.1:8110>. The dashboard offers three one-click offline
+scenarios (all run on the deterministic `mock` provider — no API key, no
+network, no Ollama download):
+
+- **Support tour** — a streamed LLM draft pauses at a human approval, resumes
+  on approval, hands off to a QA child workflow, and writes to project memory.
+  Watch the live provider stream type out the draft.
+- **Regression check** — a 6-case dataset evaluated against two immutable
+  workflow versions: v1 fails 2 cases, v2 fixes them. Compare the evaluation
+  history rows to see the regression closed.
+- **Incident** — a billing-sync run that fails after retries with a triggered
+  failure-rate alert and a failed run in the feed.
+
+Each scenario is idempotent (seeding again returns the existing demo); tick
+**reset demo data** to delete and rebuild it. The demo uses SQLite, keeps its
+data in the local `agentops-data` Docker volume, and runs queued work in the
+application process. No PostgreSQL, Redis, cloud account, or model-provider key
+is required.
 
 ## Local development
 

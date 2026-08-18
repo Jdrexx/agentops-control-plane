@@ -129,6 +129,17 @@ class AgentOpsService:
             rows = connection.execute(query, params).fetchall()
         return [dict(row) for row in rows]
 
+    def delete_project(self, project_id: int) -> None:
+        """Delete a project and everything that cascades from it.
+
+        Foreign keys cascade workflows, runs, spans, approvals, datasets,
+        evaluations, schedules, webhooks, secrets, memories, and agent events.
+        """
+        with self.db.connect() as connection:
+            cursor = connection.execute("DELETE FROM projects WHERE id=?", (project_id,))
+            if cursor.rowcount == 0:
+                raise NotFoundError("project not found")
+
     def create_workflow(
         self, project_id: int, name: str, steps: list[dict[str, Any]]
     ) -> dict[str, Any]:

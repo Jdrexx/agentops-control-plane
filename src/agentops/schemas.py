@@ -175,6 +175,11 @@ class MemoryCreate(BaseModel):
     value: Any
 
 
+class DemoSeedRequest(BaseModel):
+    scenario: Literal["tour", "quality", "incident"]
+    reset: bool = False
+
+
 class ProjectPackageProject(BaseModel):
     name: ShortName
     description: str = Field(default="", max_length=1000)
