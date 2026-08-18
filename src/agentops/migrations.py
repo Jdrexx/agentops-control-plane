@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import datetime as _dt
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from typing import Any
 
 from .database import SCHEMA, Database
@@ -159,4 +159,13 @@ def migrate(database: Database) -> list[str]:
     """
     dialect = "postgres" if database.is_postgres else "sqlite"
     with database.connect() as connection:
+        if dialect == "sqlite":
+            # WAL is persistent per file; converting mode on every runtime
+            # connection would take a mode-change lock, so set it once here,
+            # best-effort. The rare fresh-file race is suppressed: WAL will
+            # persist from whichever process converts first.
+            row = connection.execute("PRAGMA journal_mode").fetchone()
+            if row is None or str(row[0]).lower() != "wal":
+                with suppress(Exception):
+                    connection.execute("PRAGMA journal_mode = WAL")
         return _migrate_connection(connection, dialect)
