@@ -468,7 +468,9 @@ def test_advanced_matchers_and_evaluation_comparison(client: TestClient, project
     ).json()
     comparison = client.get(f"/api/evaluations/{first['id']}/compare/{second['id']}").json()
     assert comparison["pass_rate_delta"] == -0.5
-    assert comparison["regression_case_indexes"] == [1]
+    assert comparison["regressed"] == 1
+    assert comparison["cases"][0]["transition"] == "regressed"
+    assert comparison["cases"][0]["case_id"] == "case-2"
     assert client.get(f"/api/evaluations/{first['id']}").json()["passed"] == 2
 
 

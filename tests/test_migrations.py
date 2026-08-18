@@ -46,6 +46,15 @@ CREATE TABLE runs (
   started_at TEXT NOT NULL,
   finished_at TEXT
 );
+CREATE TABLE evaluations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  workflow_id INTEGER NOT NULL,
+  dataset_id INTEGER NOT NULL,
+  passed INTEGER NOT NULL,
+  total INTEGER NOT NULL,
+  results TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
 """
 
 ALL_VERSIONS = [version for version, _ in MIGRATIONS]
@@ -67,6 +76,15 @@ def test_fresh_database_migrates_to_head_and_is_idempotent(tmp_path: Path):
         assert {"expires_at", "escalation_level"} <= _columns(connection, "approvals")
         assert {"input_tokens", "output_tokens", "cost_usd"} <= _columns(connection, "spans")
         assert {"max_steps", "actor_role"} <= _columns(connection, "runs")
+        assert {
+            "status",
+            "completed_cases",
+            "pass_rate_min",
+            "max_cost_usd",
+            "max_p95_latency_ms",
+            "gate",
+            "gate_reasons",
+        } <= _columns(connection, "evaluations")
 
 
 def test_legacy_sqlite_database_is_upgraded_in_place(tmp_path: Path):
@@ -79,6 +97,15 @@ def test_legacy_sqlite_database_is_upgraded_in_place(tmp_path: Path):
         assert {"expires_at", "escalation_level"} <= _columns(connection, "approvals")
         assert {"input_tokens", "output_tokens", "cost_usd"} <= _columns(connection, "spans")
         assert {"max_steps", "actor_role"} <= _columns(connection, "runs")
+        assert {
+            "status",
+            "completed_cases",
+            "pass_rate_min",
+            "max_cost_usd",
+            "max_p95_latency_ms",
+            "gate",
+            "gate_reasons",
+        } <= _columns(connection, "evaluations")
         assert (
             connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
             == len(MIGRATIONS)

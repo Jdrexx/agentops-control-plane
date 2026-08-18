@@ -37,8 +37,36 @@
     </section>
 
     <section id="quality" class="view">
-      <div class="section-head"><div><p class="eyebrow">QUALITY LAB</p><h1>Catch regressions<br><em>before release.</em></h1></div></div>
-      <section class="grid"><article class="panel"><div class="panel-title"><div><small>DATASETS</small><h2>Evaluation suites</h2></div></div><div id="datasets" class="empty">No datasets yet. Create them through the API.</div></article><article class="panel"><div class="panel-title"><div><small>HISTORY</small><h2>Evaluation results</h2></div></div><div id="evaluations" class="empty">No evaluations yet.</div></article></section>
+      <div class="section-head"><div><p class="eyebrow">QUALITY LAB</p><h1>Catch regressions<br><em>before release.</em></h1></div><p class="lede">Evaluate immutable workflow versions against datasets, gate releases, and diff case-level regressions between runs.</p></div>
+      <section class="grid">
+        <article class="panel">
+          <div class="panel-title"><div><small>DATASETS</small><h2>Evaluation suites</h2></div></div>
+          <div id="datasets" class="empty">No datasets yet. Create one below.</div>
+          <details class="create-box"><summary>Create dataset</summary>
+            <label>Project<select id="dataset-project"></select></label>
+            <label>Name<input id="dataset-name" maxlength="100" placeholder="Ticket classification"></label>
+            <label>Cases — JSON array<textarea id="dataset-cases" rows="6" placeholder='[{"input": "My invoice is wrong", "expected": "BILLING", "matcher": "contains"}]'></textarea></label>
+            <button id="create-dataset">Create dataset</button>
+          </details>
+        </article>
+        <article class="panel">
+          <div class="panel-title"><div><small>HISTORY</small><h2>Evaluation results</h2></div><button class="ghost" id="compare-evals" disabled>Compare selected</button></div>
+          <div id="evaluations" class="empty">No evaluations yet.</div>
+          <details class="create-box"><summary>Run evaluation</summary>
+            <label>Project<select id="eval-project"></select></label>
+            <label>Workflow version<select id="eval-workflow"></select></label>
+            <label>Dataset<select id="eval-dataset"></select></label>
+            <label>Gate: min pass rate (0–1)<input id="eval-pass-min" type="number" min="0" max="1" step="0.05" placeholder="0.8"></label>
+            <label>Gate: max cost ($)<input id="eval-max-cost" type="number" min="0" step="0.01" placeholder="0.05"></label>
+            <label>Execution<select id="eval-execution"><option value="queued">Queued (progress)</option><option value="sync">Sync</option></select></label>
+            <button id="run-eval">Run evaluation</button>
+          </details>
+        </article>
+      </section>
+      <section class="panel" id="eval-diff-panel" hidden>
+        <div class="panel-title"><div><small>REGRESSION DIFF</small><h2 id="eval-diff-title">Evaluation comparison</h2></div><button class="ghost" id="close-diff">Close</button></div>
+        <div id="eval-diff" class="empty">Select two evaluations and compare them.</div>
+      </section>
     </section>
   </main>
   <dialog id="json-dialog" aria-labelledby="dialog-title"><form method="dialog"><div class="panel-title"><h2 id="dialog-title">Details</h2><button class="ghost">Close</button></div><pre id="dialog-json"></pre></form></dialog>
