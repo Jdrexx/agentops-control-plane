@@ -128,9 +128,13 @@ class ApprovalDecision(BaseModel):
 
 
 class DatasetCase(BaseModel):
+    id: str | None = Field(default=None, min_length=1, max_length=100)
     input: Any
     expected: Any
     matcher: Literal["exact", "contains", "regex", "json_schema", "llm_judge"] = "exact"
+    judge_provider: Literal["mock", "ollama", "openai", "anthropic"] = "mock"
+    judge_model: str = Field(default="", max_length=200)
+    rubric: str = Field(default="", max_length=2000)
 
 
 class DatasetCreate(BaseModel):
@@ -142,6 +146,10 @@ class DatasetCreate(BaseModel):
 class EvaluationCreate(BaseModel):
     workflow_id: int = Field(gt=0)
     dataset_id: int = Field(gt=0)
+    execution: Literal["sync", "queued"] = "sync"
+    pass_rate_min: float | None = Field(default=None, ge=0, le=1)
+    max_cost_usd: float | None = Field(default=None, ge=0)
+    max_p95_latency_ms: float | None = Field(default=None, ge=0)
 
 
 class UserCreate(BaseModel):

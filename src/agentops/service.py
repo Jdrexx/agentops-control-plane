@@ -15,6 +15,7 @@ from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import jsonschema
 import psycopg
 
 from .database import Database
@@ -58,6 +59,7 @@ class AgentOpsService:
         self.notifier = Notifier()
         self.run_queue = RunQueue(self._execute_queued, consume=consume_runs)
         self.tool_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="agentops-tool")
+        self.eval_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="agentops-eval")
         self._scheduler_stop = threading.Event()
         self._scheduler_thread: threading.Thread | None = None
 
@@ -67,6 +69,7 @@ class AgentOpsService:
             self._scheduler_thread.join(timeout=2)
         self.run_queue.close()
         self.tool_executor.shutdown(wait=False, cancel_futures=True)
+        self.eval_executor.shutdown(wait=False, cancel_futures=True)
 
     def start_scheduler(self) -> None:
         if self._scheduler_thread is not None:
@@ -891,11 +894,19 @@ class AgentOpsService:
         self, project_id: int, name: str, cases: list[dict[str, Any]]
     ) -> dict[str, Any]:
         self.get_project(project_id)
+        seen: set[str] = set()
+        normalized = []
+        for index, case in enumerate(cases):
+            case_id = str(case.get("id") or f"case-{index + 1}").strip()
+            if case_id in seen:
+                raise ConflictError(f"duplicate case id: {case_id}")
+            seen.add(case_id)
+            normalized.append({**case, "id": case_id})
         try:
             with self.db.connect() as connection:
                 cursor = connection.execute(
                     "INSERT INTO datasets(project_id,name,cases,created_at) VALUES(?,?,?,?)",
-                    (project_id, name, encode(cases), now()),
+                    (project_id, name, encode(normalized), now()),
                 )
                 dataset_id = int(cursor.lastrowid)
         except (sqlite3.IntegrityError, psycopg.IntegrityError) as error:
@@ -939,100 +950,210 @@ class AgentOpsService:
         return results
 
     def evaluate(
-        self, workflow_id: int, dataset_id: int, actor_role: str = "admin"
+        self,
+        workflow_id: int,
+        dataset_id: int,
+        actor_role: str = "admin",
+        execution: str = "sync",
+        pass_rate_min: float | None = None,
+        max_cost_usd: float | None = None,
+        max_p95_latency_ms: float | None = None,
     ) -> dict[str, Any]:
+        """Evaluate a workflow against a dataset.
+
+        ``execution="sync"`` runs inline and returns the finished evaluation;
+        ``execution="queued"`` records a running evaluation, dispatches it to
+        the evaluation executor, and returns immediately with progress fields
+        (``status`` / ``completed_cases``) that pollers can watch.
+        """
         workflow = self.get_workflow(workflow_id)
         dataset = self.get_dataset(dataset_id)
         if workflow["project_id"] != dataset["project_id"]:
             raise ConflictError("workflow and dataset must belong to the same project")
-        results = []
+        if execution not in {"sync", "queued"}:
+            raise ValueError(f"unknown execution mode: {execution}")
+        thresholds = {
+            "pass_rate_min": pass_rate_min,
+            "max_cost_usd": max_cost_usd,
+            "max_p95_latency_ms": max_p95_latency_ms,
+        }
+        with self.db.connect() as connection:
+            cursor = connection.execute(
+                """INSERT INTO evaluations(
+                       workflow_id, dataset_id, passed, total, results, status,
+                       completed_cases, pass_rate_min, max_cost_usd,
+                       max_p95_latency_ms, created_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    workflow_id,
+                    dataset_id,
+                    0,
+                    len(dataset["cases"]),
+                    encode([]),
+                    "queued" if execution == "queued" else "running",
+                    0,
+                    pass_rate_min,
+                    max_cost_usd,
+                    max_p95_latency_ms,
+                    now(),
+                ),
+            )
+            evaluation_id = int(cursor.lastrowid)
+        if execution == "queued":
+            self.eval_executor.submit(
+                self._run_evaluation_job,
+                evaluation_id,
+                workflow_id,
+                dataset_id,
+                actor_role,
+                thresholds,
+            )
+            return self.get_evaluation(evaluation_id)
+        return self._run_evaluation_job(
+            evaluation_id, workflow_id, dataset_id, actor_role, thresholds
+        )
+
+    def _run_evaluation_job(
+        self,
+        evaluation_id: int,
+        workflow_id: int,
+        dataset_id: int,
+        actor_role: str,
+        thresholds: dict[str, Any],
+    ) -> dict[str, Any]:
+        dataset = self.get_dataset(dataset_id)
+        results: list[dict[str, Any]] = []
         for case in dataset["cases"]:
+            if self._evaluation_status(evaluation_id) == "cancelled":
+                break
             created_run = self.start_run(workflow_id, case["input"], actor_role=actor_role)
             run = self.get_run(created_run["id"], redact_sensitive=False)
             actual = run["output"]
-            expected = case["expected"]
             passed = run["status"] == "completed" and self._match_evaluation(
-                case["matcher"], actual, expected
+                case["matcher"], actual, case["expected"], case
             )
             results.append(
                 {
+                    "case_id": case["id"],
                     "run_id": run["id"],
                     "passed": passed,
                     "matcher": case["matcher"],
                     "actual": actual,
-                    "expected": expected,
+                    "expected": case["expected"],
+                    "duration_ms": round(sum(span["duration_ms"] for span in run["spans"]), 3),
+                    "cost_usd": round(sum(span["cost_usd"] for span in run["spans"]), 6),
                 }
             )
+            with self.db.connect() as connection:
+                connection.execute(
+                    "UPDATE evaluations SET completed_cases=? WHERE id=?",
+                    (len(results), evaluation_id),
+                )
+        cancelled = self._evaluation_status(evaluation_id) == "cancelled"
         passed_count = sum(result["passed"] for result in results)
+        gate, gate_reasons = self._evaluation_gate(results, thresholds)
+        with self.db.connect() as connection:
+            connection.execute(
+                """UPDATE evaluations
+                   SET passed=?, total=?, results=?, status=?, completed_cases=?,
+                       gate=?, gate_reasons=?
+                   WHERE id=?""",
+                (
+                    passed_count,
+                    len(dataset["cases"]),
+                    encode(results),
+                    "cancelled" if cancelled else "completed",
+                    len(results),
+                    gate,
+                    encode(gate_reasons),
+                    evaluation_id,
+                ),
+            )
+        return self.get_evaluation(evaluation_id)
+
+    def cancel_evaluation(self, evaluation_id: int) -> dict[str, Any]:
+        """Cancel a queued or running evaluation; the worker stops between cases."""
         with self.db.connect() as connection:
             cursor = connection.execute(
-                """INSERT INTO evaluations(
-                       workflow_id, dataset_id, passed, total, results, created_at
-                   ) VALUES (?, ?, ?, ?, ?, ?)""",
-                (workflow_id, dataset_id, passed_count, len(results), encode(results), now()),
+                "UPDATE evaluations SET status='cancelled' "
+                "WHERE id=? AND status IN ('queued', 'running')",
+                (evaluation_id,),
             )
-            evaluation_id = int(cursor.lastrowid)
-        return {
-            "id": evaluation_id,
-            "workflow_id": workflow_id,
-            "dataset_id": dataset_id,
-            "passed": passed_count,
-            "total": len(results),
-            "pass_rate": passed_count / len(results),
-            "results": results,
-        }
+            if cursor.rowcount == 0:
+                row = connection.execute(
+                    "SELECT status FROM evaluations WHERE id=?", (evaluation_id,)
+                ).fetchone()
+                if row is None:
+                    raise NotFoundError("evaluation not found")
+                raise ConflictError(f"evaluation cannot be cancelled in state {row['status']}")
+        return self.get_evaluation(evaluation_id)
 
-    def _match_evaluation(self, matcher: str, actual: Any, expected: Any) -> bool:
+    def _evaluation_status(self, evaluation_id: int) -> str:
+        with self.db.connect() as connection:
+            row = connection.execute(
+                "SELECT status FROM evaluations WHERE id=?", (evaluation_id,)
+            ).fetchone()
+        if row is None:
+            raise NotFoundError("evaluation not found")
+        return row["status"]
+
+    @staticmethod
+    def _evaluation_gate(
+        results: list[dict[str, Any]], thresholds: dict[str, Any]
+    ) -> tuple[str | None, list[str]]:
+        """Compute the release-gate verdict from configured thresholds."""
+        if not results or not any(value is not None for value in thresholds.values()):
+            return None, []
+        pass_rate = sum(result["passed"] for result in results) / len(results)
+        cost = sum(result["cost_usd"] for result in results)
+        durations = sorted(result["duration_ms"] for result in results)
+        p95 = durations[min(len(durations) - 1, int(len(durations) * 0.95))]
+        reasons: list[str] = []
+        minimum = thresholds["pass_rate_min"]
+        if minimum is not None and pass_rate < minimum:
+            reasons.append(f"pass rate {pass_rate:.0%} below {minimum:.0%}")
+        maximum = thresholds["max_cost_usd"]
+        if maximum is not None and cost > maximum:
+            reasons.append(f"cost ${cost:.4f} above ${maximum:.4f}")
+        latency = thresholds["max_p95_latency_ms"]
+        if latency is not None and p95 > latency:
+            reasons.append(f"p95 latency {p95:.1f}ms above {latency:.1f}ms")
+        return ("failed" if reasons else "passed"), reasons
+
+    def _match_evaluation(
+        self, matcher: str, actual: Any, expected: Any, case: dict[str, Any] | None = None
+    ) -> bool:
         if matcher == "exact":
             return actual == expected
         if matcher == "contains":
             return str(expected) in str(actual)
         if matcher == "regex":
+            pattern = str(expected)
+            if len(pattern) > 2000:
+                return False
             try:
-                return re.search(str(expected), str(actual)) is not None
-            except re.error:
+                future = self.tool_executor.submit(re.search, pattern, str(actual))
+                return future.result(timeout=1) is not None
+            except (re.error, TimeoutError):
                 return False
         if matcher == "json_schema":
-            return self._matches_schema(actual, expected)
+            try:
+                jsonschema.validate(instance=actual, schema=expected)
+                return True
+            except (jsonschema.ValidationError, jsonschema.SchemaError):
+                return False
         if matcher == "llm_judge":
+            case = case or {}
+            rubric = str(case.get("rubric") or expected)
             verdict = self.providers.generate(
-                "ollama",
-                "",
+                str(case.get("judge_provider", "mock")),
+                str(case.get("judge_model", "")),
                 f"""Decide whether ACTUAL satisfies CRITERIA. Reply only PASS or FAIL.
-CRITERIA: {encode(expected)}
+CRITERIA: {encode(rubric)}
 ACTUAL: {encode(actual)}""",
             )
             return verdict.strip().upper().startswith("PASS")
         raise ValueError(f"unknown matcher: {matcher}")
-
-    @classmethod
-    def _matches_schema(cls, value: Any, schema: Any) -> bool:
-        if not isinstance(schema, dict):
-            return False
-        expected_type = schema.get("type")
-        types = {
-            "object": dict,
-            "array": list,
-            "string": str,
-            "number": (int, float),
-            "integer": int,
-            "boolean": bool,
-            "null": type(None),
-        }
-        if expected_type in types:
-            if expected_type in {"number", "integer"} and isinstance(value, bool):
-                return False
-            if not isinstance(value, types[expected_type]):
-                return False
-        if isinstance(value, dict):
-            if any(key not in value for key in schema.get("required", [])):
-                return False
-            for key, child_schema in schema.get("properties", {}).items():
-                if key in value and not cls._matches_schema(value[key], child_schema):
-                    return False
-        if isinstance(value, list) and "items" in schema:
-            return all(cls._matches_schema(item, schema["items"]) for item in value)
-        return True
 
     def get_evaluation(self, evaluation_id: int) -> dict[str, Any]:
         with self.db.connect() as connection:
@@ -1043,28 +1164,82 @@ ACTUAL: {encode(actual)}""",
             raise NotFoundError("evaluation not found")
         result = dict(row)
         result["results"] = decode(result["results"])
+        result["gate_reasons"] = decode(result["gate_reasons"]) if result["gate_reasons"] else []
         result["pass_rate"] = result["passed"] / result["total"] if result["total"] else 0
         return result
 
     def compare_evaluations(self, left_id: int, right_id: int) -> dict[str, Any]:
+        """Case-level comparison of two evaluations of the same dataset."""
         left = self.get_evaluation(left_id)
         right = self.get_evaluation(right_id)
-        left_cases = left["results"]
-        right_cases = right["results"]
-        regressions = []
-        improvements = []
-        for index in range(min(len(left_cases), len(right_cases))):
-            if left_cases[index]["passed"] and not right_cases[index]["passed"]:
-                regressions.append(index)
-            if not left_cases[index]["passed"] and right_cases[index]["passed"]:
-                improvements.append(index)
-        return {
-            "left": left,
-            "right": right,
-            "pass_rate_delta": right["pass_rate"] - left["pass_rate"],
-            "regression_case_indexes": regressions,
-            "improvement_case_indexes": improvements,
+        if left["dataset_id"] != right["dataset_id"]:
+            raise ConflictError("cannot compare evaluations across different datasets")
+        left_by_case = {case["case_id"]: case for case in left["results"]}
+        right_by_case = {case["case_id"]: case for case in right["results"]}
+        order = {
+            "regressed": 0,
+            "fixed": 1,
+            "removed": 2,
+            "added": 3,
+            "stable_fail": 4,
+            "stable_pass": 5,
         }
+
+        def transition(left_case, right_case) -> str:
+            if left_case is None:
+                return "added"
+            if right_case is None:
+                return "removed"
+            if left_case["passed"] and not right_case["passed"]:
+                return "regressed"
+            if not left_case["passed"] and right_case["passed"]:
+                return "fixed"
+            return "stable_pass" if right_case["passed"] else "stable_fail"
+
+        rows = []
+        for case_id in dict.fromkeys([*left_by_case, *right_by_case]):
+            left_case = left_by_case.get(case_id)
+            right_case = right_by_case.get(case_id)
+            rows.append(
+                {
+                    "case_id": case_id,
+                    "transition": transition(left_case, right_case),
+                    "expected": (left_case or right_case).get("expected"),
+                    "left": left_case,
+                    "right": right_case,
+                }
+            )
+        rows.sort(key=lambda row: order[row["transition"]])
+        counts = {name: sum(1 for row in rows if row["transition"] == name) for name in order}
+        left_cost = sum(case.get("cost_usd", 0) for case in left["results"])
+        right_cost = sum(case.get("cost_usd", 0) for case in right["results"])
+
+        def p95(values: list[float]) -> float:
+            if not values:
+                return 0
+            ordered = sorted(values)
+            return ordered[min(len(ordered) - 1, int(len(ordered) * 0.95))]
+
+        return {
+            "left_id": left_id,
+            "right_id": right_id,
+            "pass_rate_delta": right["pass_rate"] - left["pass_rate"],
+            "cost_delta_usd": round(right_cost - left_cost, 6),
+            "p95_latency_delta_ms": round(
+                p95([case.get("duration_ms", 0) for case in right["results"]])
+                - p95([case.get("duration_ms", 0) for case in left["results"]]),
+                3,
+            ),
+            **counts,
+            "cases": rows,
+        }
+
+    def delete_dataset(self, dataset_id: int) -> None:
+        """Delete a dataset; its evaluations cascade via foreign keys."""
+        with self.db.connect() as connection:
+            cursor = connection.execute("DELETE FROM datasets WHERE id=?", (dataset_id,))
+            if cursor.rowcount == 0:
+                raise NotFoundError("dataset not found")
 
     def list_evaluations(
         self,
@@ -1094,6 +1269,7 @@ ACTUAL: {encode(actual)}""",
         for row in rows:
             item = dict(row)
             item["results"] = decode(item["results"])
+            item["gate_reasons"] = decode(item["gate_reasons"]) if item["gate_reasons"] else []
             item["pass_rate"] = item["passed"] / item["total"] if item["total"] else 0
             evaluations.append(item)
         return evaluations

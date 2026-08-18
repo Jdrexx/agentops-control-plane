@@ -83,6 +83,13 @@ CREATE TABLE IF NOT EXISTS evaluations (
   passed INTEGER NOT NULL,
   total INTEGER NOT NULL,
   results TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'completed',
+  completed_cases INTEGER NOT NULL DEFAULT 0,
+  pass_rate_min REAL,
+  max_cost_usd REAL,
+  max_p95_latency_ms REAL,
+  gate TEXT,
+  gate_reasons TEXT,
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS schedules (

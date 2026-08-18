@@ -1,5 +1,5 @@
 const $ = id => document.getElementById(id);
-const state = {tools: [], templates: [], projects: [], steps: [], selectedStep: null, selectedRun: null, runs: [], lastEventId: 0, liveSocket: null, liveReconnectTimer: null, liveEnabled: false, authEnabled: false};
+const state = {tools: [], templates: [], projects: [], steps: [], selectedStep: null, selectedRun: null, runs: [], lastEventId: 0, liveSocket: null, liveReconnectTimer: null, liveEnabled: false, authEnabled: false, datasets: [], evaluations: [], selectedEvals: new Set(), evalPollTimer: null};
 const requireLogin = () => {
   disconnectLive();
   $('login-error').textContent = '';
@@ -69,7 +69,109 @@ function renderConfig() { const step = state.steps[state.selectedStep]; if (!ste
 
 async function saveWorkflow(runAfter = false) { if (!state.projects.length) throw new Error('Create a project or load the demo first'); if (!state.steps.length) throw new Error('Add at least one step'); const workflow = await api('/api/workflows', {method:'POST', body:pretty({project_id:Number($('project-select').value), name:$('workflow-name').value, steps:state.steps})}); toast(`Saved ${workflow.name} v${workflow.version}`); if (runAfter) { const raw = prompt('Run input as JSON', '"Hello agent"'); if (raw !== null) { const run = await api(`/api/workflows/${workflow.id}/runs`, {method:'POST', body:pretty({input:JSON.parse(raw)})}); switchView('operations'); await loadOperations(); await showTrace(run.id); }} return workflow; }
 
-async function loadQuality() { const [datasets, evaluations] = await Promise.all([api('/api/datasets'), api('/api/evaluations')]); $('datasets').className = datasets.length ? '' : 'empty'; $('datasets').innerHTML = datasets.length ? datasets.map(item => `<button class="quality-row" data-dataset="${item.id}"><span><b>${esc(item.name)}</b><small>Project ${item.project_id}</small></span><b>${item.cases.length} cases</b></button>`).join('') : 'No datasets yet. Create them through the API.'; $('evaluations').className = evaluations.length ? '' : 'empty'; $('evaluations').innerHTML = evaluations.length ? evaluations.map(item => `<button class="quality-row" data-evaluation="${item.id}"><span><b>Workflow ${item.workflow_id}</b><small>${new Date(item.created_at).toLocaleString()}</small></span><b class="${item.pass_rate === 1 ? 'good' : ''}">${Math.round(item.pass_rate * 100)}%</b></button>`).join('') : 'No evaluations yet.'; document.querySelectorAll('[data-dataset]').forEach(el => el.onclick = () => showJSON('Dataset', datasets.find(item => item.id === Number(el.dataset.dataset)))); document.querySelectorAll('[data-evaluation]').forEach(el => el.onclick = () => showJSON('Evaluation', evaluations.find(item => item.id === Number(el.dataset.evaluation)))); }
+async function loadQuality() {
+  const [datasets, evaluations, workflows, projects] = await Promise.all([
+    api('/api/datasets'), api('/api/evaluations'), api('/api/workflows'), api('/api/projects'),
+  ]);
+  state.datasets = datasets; state.evaluations = evaluations; state.workflows = workflows;
+  renderDatasets(datasets, projects);
+  renderEvaluations(evaluations);
+  populateQualityForms(projects, workflows, datasets);
+  const busy = evaluations.some(item => item.status === 'queued' || item.status === 'running');
+  $('compare-evals').disabled = state.selectedEvals.size < 2;
+  if (busy) { clearTimeout(state.evalPollTimer); state.evalPollTimer = setTimeout(loadQuality, 1500); }
+}
+
+function renderDatasets(datasets, projects) {
+  const projectName = id => (projects.find(item => item.id === id) || {}).name || `Project ${id}`;
+  $('datasets').className = datasets.length ? '' : 'empty';
+  $('datasets').innerHTML = datasets.length ? datasets.map(item => `<div class="quality-row"><span><b>${esc(item.name)}</b><small>${item.cases.length} cases · ${esc(projectName(item.project_id))}</small></span><div class="row-actions"><button class="mini" data-dataset-json="${item.id}">JSON</button><button class="mini danger" data-dataset-del="${item.id}">Delete</button></div></div>`).join('') : 'No datasets yet. Create one below.';
+  document.querySelectorAll('[data-dataset-json]').forEach(el => el.onclick = () => showJSON('Dataset', datasets.find(item => item.id === Number(el.dataset.datasetJson))));
+  document.querySelectorAll('[data-dataset-del]').forEach(el => el.onclick = async () => {
+    const item = datasets.find(entry => entry.id === Number(el.dataset.datasetDel));
+    if (!confirm(`Delete dataset "${item.name}" and its evaluations?`)) return;
+    await api(`/api/datasets/${item.id}`, {method:'DELETE'});
+    toast('Dataset deleted');
+    await loadQuality();
+  });
+}
+
+function renderEvaluations(evaluations) {
+  $('evaluations').className = evaluations.length ? '' : 'empty';
+  $('evaluations').innerHTML = evaluations.length ? evaluations.map(item => {
+    const gate = item.gate ? `<b class="gate ${esc(item.gate)}">${item.gate.toUpperCase()}</b>` : '';
+    const status = item.status === 'completed' ? '' : `<b class="status ${esc(item.status)}">${esc(item.status)} ${item.completed_cases}/${item.total}</b>`;
+    const cancel = item.status === 'queued' || item.status === 'running' ? `<button class="mini danger" data-eval-cancel="${item.id}">Cancel</button>` : '';
+    const checked = state.selectedEvals.has(item.id) ? 'checked' : '';
+    return `<div class="eval-row"><label><input type="checkbox" data-eval-check="${item.id}" ${checked}></label><button class="eval-main" data-eval-json="${item.id}"><span><b>Workflow ${item.workflow_id}</b><small>${new Date(item.created_at).toLocaleString()} · ${item.total} cases</small></span></button>${status}<b class="${item.pass_rate === 1 ? 'good' : ''}">${item.status === 'completed' ? Math.round(item.pass_rate * 100) + '%' : '…'}</b>${gate}${cancel}</div>`;
+  }).join('') : 'No evaluations yet. Run one below.';
+  document.querySelectorAll('[data-eval-check]').forEach(el => el.onchange = () => {
+    const id = Number(el.dataset.evalCheck);
+    if (el.checked) state.selectedEvals.add(id); else state.selectedEvals.delete(id);
+    $('compare-evals').disabled = state.selectedEvals.size < 2;
+  });
+  document.querySelectorAll('[data-eval-json]').forEach(el => el.onclick = () => showJSON('Evaluation', evaluations.find(item => item.id === Number(el.dataset.evalJson))));
+  document.querySelectorAll('[data-eval-cancel]').forEach(el => el.onclick = async () => {
+    await api(`/api/evaluations/${el.dataset.evalCancel}/cancel`, {method:'POST'});
+    toast('Evaluation cancelled');
+    await loadQuality();
+  });
+}
+
+function populateQualityForms(projects, workflows, datasets) {
+  const projectOptions = projects.length ? projects.map(item => `<option value="${item.id}">${esc(item.name)}</option>`).join('') : '<option value="">No projects</option>';
+  const keepDataset = $('dataset-project').value;
+  $('dataset-project').innerHTML = projectOptions;
+  if (projects.some(item => String(item.id) === keepDataset)) $('dataset-project').value = keepDataset;
+  const keepEval = $('eval-project').value;
+  $('eval-project').innerHTML = projectOptions;
+  if (projects.some(item => String(item.id) === keepEval)) $('eval-project').value = keepEval;
+  const projectId = Number($('eval-project').value) || 0;
+  const projectWorkflows = workflows.filter(item => item.project_id === projectId);
+  const projectDatasets = datasets.filter(item => item.project_id === projectId);
+  $('eval-workflow').innerHTML = projectWorkflows.length ? projectWorkflows.map(item => `<option value="${item.id}">${esc(item.name)} v${item.version}</option>`).join('') : '<option value="">No workflows</option>';
+  $('eval-dataset').innerHTML = projectDatasets.length ? projectDatasets.map(item => `<option value="${item.id}">${esc(item.name)}</option>`).join('') : '<option value="">No datasets</option>';
+}
+
+async function createDataset() {
+  const projectId = Number($('dataset-project').value);
+  const name = $('dataset-name').value.trim();
+  let cases;
+  try { cases = JSON.parse($('dataset-cases').value); } catch (_) { throw new Error('Cases must be valid JSON'); }
+  if (!projectId) throw new Error('Choose a project');
+  if (!name) throw new Error('Dataset name is required');
+  if (!Array.isArray(cases) || !cases.length) throw new Error('Cases must be a non-empty array');
+  await api('/api/datasets', {method:'POST', body: pretty({project_id: projectId, name, cases})});
+  toast('Dataset created');
+  $('dataset-name').value = ''; $('dataset-cases').value = '';
+  await loadQuality();
+}
+
+async function runEvaluation() {
+  const workflowId = Number($('eval-workflow').value);
+  const datasetId = Number($('eval-dataset').value);
+  if (!workflowId || !datasetId) throw new Error('Choose a workflow and dataset');
+  const body = {workflow_id: workflowId, dataset_id: datasetId, execution: $('eval-execution').value};
+  const passMin = parseFloat($('eval-pass-min').value);
+  const maxCost = parseFloat($('eval-max-cost').value);
+  if (!isNaN(passMin)) body.pass_rate_min = passMin;
+  if (!isNaN(maxCost)) body.max_cost_usd = maxCost;
+  const evaluation = await api('/api/evaluations', {method:'POST', body: pretty(body)});
+  toast(evaluation.status === 'queued' ? 'Evaluation queued — watching progress' : `Evaluation complete: ${Math.round(evaluation.pass_rate * 100)}%`);
+  await loadQuality();
+}
+
+async function compareEvaluations() {
+  const [left, right] = [...state.selectedEvals];
+  if (!left || !right) return;
+  const comparison = await api(`/api/evaluations/${left}/compare/${right}`);
+  $('eval-diff-panel').hidden = false;
+  const delta = value => (value >= 0 ? '+' : '') + value.toFixed(1);
+  const summary = `<div class="diff-summary"><span>Pass rate <b>${delta(comparison.pass_rate_delta * 100)}%</b></span><span>Cost Δ <b>${comparison.cost_delta_usd >= 0 ? '+' : ''}$${comparison.cost_delta_usd.toFixed(4)}</b></span><span>p95 Δ <b>${delta(comparison.p95_latency_delta_ms)}ms</b></span><span>Regressed <b class="red">${comparison.regressed}</b></span><span>Fixed <b class="good">${comparison.fixed}</b></span></div>`;
+  const rows = comparison.cases.map(item => `<div class="diff-row ${esc(item.transition)}"><b>${esc(item.case_id)}</b><span class="badge">${esc(item.transition.replace('_', ' '))}</span><code>${esc(pretty(item.expected))}</code><small>${item.left ? (item.left.passed ? 'PASS' : 'FAIL') : '—'} → ${item.right ? (item.right.passed ? 'PASS' : 'FAIL') : '—'}</small></div>`).join('');
+  $('eval-diff').className = '';
+  $('eval-diff').innerHTML = summary + (rows || '<div class="empty">No case transitions.</div>');
+}
 async function decide(id, decision) { await api(`/api/approvals/${id}/decision`, {method:'POST', body:pretty({decision, note: decision === 'rejected' ? 'Rejected from dashboard' : ''})}); toast(decision === 'approved' ? 'Run approved and resumed' : 'Run rejected'); await loadOperations(); }
 async function loadDemo(scenario, reset) {
   const result = await api('/api/demo/seed', {method:'POST', body: pretty({scenario, reset})});
@@ -86,7 +188,7 @@ async function loadDemo(scenario, reset) {
 }
 function switchView(id) { document.querySelectorAll('.view').forEach(el => el.classList.toggle('active', el.id === id)); document.querySelectorAll('.nav').forEach(el => el.classList.toggle('active', el.dataset.view === id)); if (id === 'builder') loadBuilder().catch(error => toast(error.message)); if (id === 'quality') loadQuality().catch(error => toast(error.message)); }
 
-document.querySelectorAll('.nav').forEach(el => el.onclick = () => switchView(el.dataset.view)); $('demo-tour').onclick = () => loadDemo('tour', $('demo-reset').checked).catch(error => toast(error.message)); $('demo-quality').onclick = () => loadDemo('quality', $('demo-reset').checked).catch(error => toast(error.message)); $('demo-incident').onclick = () => loadDemo('incident', $('demo-reset').checked).catch(error => toast(error.message)); $('refresh').onclick = () => loadOperations().catch(error => toast(error.message)); $('clear-steps').onclick = () => { state.steps = []; state.selectedStep = null; renderSteps(); }; $('save-workflow').onclick = () => saveWorkflow(false).catch(error => toast(error.message)); $('save-run').onclick = () => saveWorkflow(true).catch(error => toast(error.message)); $('replay').onclick = async () => { const run = await api(`/api/runs/${state.selectedRun.id}/replay`, {method:'POST'}); await loadOperations(); await showTrace(run.id); toast('Replay completed'); }; $('compare').onclick = async () => { const other = Number(prompt('Compare with run ID')); if (other) showJSON('Run comparison', await api(`/api/runs/${state.selectedRun.id}/compare/${other}`)); };
+document.querySelectorAll('.nav').forEach(el => el.onclick = () => switchView(el.dataset.view)); $('demo-tour').onclick = () => loadDemo('tour', $('demo-reset').checked).catch(error => toast(error.message)); $('demo-quality').onclick = () => loadDemo('quality', $('demo-reset').checked).catch(error => toast(error.message)); $('demo-incident').onclick = () => loadDemo('incident', $('demo-reset').checked).catch(error => toast(error.message)); $('refresh').onclick = () => loadOperations().catch(error => toast(error.message)); $('create-dataset').onclick = () => createDataset().catch(error => toast(error.message)); $('run-eval').onclick = () => runEvaluation().catch(error => toast(error.message)); $('compare-evals').onclick = () => compareEvaluations().catch(error => toast(error.message)); $('close-diff').onclick = () => { $('eval-diff-panel').hidden = true; }; $('eval-project').onchange = () => { const workflows = state.workflows || []; const datasets = state.datasets || []; populateQualityForms(state.projects, workflows, datasets); }; $('dataset-project').onchange = () => { $('dataset-cases').focus(); }; $('clear-steps').onclick = () => { state.steps = []; state.selectedStep = null; renderSteps(); }; $('save-workflow').onclick = () => saveWorkflow(false).catch(error => toast(error.message)); $('save-run').onclick = () => saveWorkflow(true).catch(error => toast(error.message)); $('replay').onclick = async () => { const run = await api(`/api/runs/${state.selectedRun.id}/replay`, {method:'POST'}); await loadOperations(); await showTrace(run.id); toast('Replay completed'); }; $('compare').onclick = async () => { const other = Number(prompt('Compare with run ID')); if (other) showJSON('Run comparison', await api(`/api/runs/${state.selectedRun.id}/compare/${other}`)); };
 $('login-form').onsubmit = async event => {
   event.preventDefault();
   sessionStorage.setItem('agentops-token', $('login-token').value);

@@ -95,11 +95,27 @@ def _m_0004_run_controls(connection: Any, dialect: str) -> None:
         connection.execute("ALTER TABLE runs ADD COLUMN actor_role TEXT NOT NULL DEFAULT 'admin'")
 
 
+def _m_0005_evaluation_progress(connection: Any, dialect: str) -> None:
+    columns = _table_columns(connection, "evaluations", dialect)
+    for name, definition in {
+        "status": "TEXT NOT NULL DEFAULT 'completed'",
+        "completed_cases": "INTEGER NOT NULL DEFAULT 0",
+        "pass_rate_min": "REAL",
+        "max_cost_usd": "REAL",
+        "max_p95_latency_ms": "REAL",
+        "gate": "TEXT",
+        "gate_reasons": "TEXT",
+    }.items():
+        if name not in columns:
+            connection.execute(f"ALTER TABLE evaluations ADD COLUMN {name} {definition}")
+
+
 MIGRATIONS: list[Migration] = [
     ("0001_initial", _m_0001_initial),
     ("0002_approval_expiry", _m_0002_approval_expiry),
     ("0003_span_cost_columns", _m_0003_span_cost_columns),
     ("0004_run_controls", _m_0004_run_controls),
+    ("0005_evaluation_progress", _m_0005_evaluation_progress),
 ]
 
 

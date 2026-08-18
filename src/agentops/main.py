@@ -449,13 +449,31 @@ def create_app(database_path: str | None = None) -> FastAPI:
         require_dataset_access(request, dataset_id)
         return service(request).get_dataset(dataset_id)
 
+    @app.delete("/api/datasets/{dataset_id}")
+    def delete_dataset(dataset_id: int, request: Request):
+        require_dataset_access(request, dataset_id, write=True)
+        service(request).delete_dataset(dataset_id)
+        return {"deleted": dataset_id}
+
     @app.post("/api/evaluations", status_code=201)
     def evaluate(body: EvaluationCreate, request: Request):
         require_workflow_access(request, body.workflow_id, write=True)
         require_dataset_access(request, body.dataset_id, write=True)
         return service(request).evaluate(
-            body.workflow_id, body.dataset_id, actor_role=request.state.actor.role
+            body.workflow_id,
+            body.dataset_id,
+            actor_role=request.state.actor.role,
+            execution=body.execution,
+            pass_rate_min=body.pass_rate_min,
+            max_cost_usd=body.max_cost_usd,
+            max_p95_latency_ms=body.max_p95_latency_ms,
         )
+
+    @app.post("/api/evaluations/{evaluation_id}/cancel")
+    def cancel_evaluation(evaluation_id: int, request: Request):
+        evaluation = service(request).get_evaluation(evaluation_id)
+        require_workflow_access(request, evaluation["workflow_id"], write=True)
+        return service(request).cancel_evaluation(evaluation_id)
 
     @app.get("/api/evaluations")
     def evaluations(
