@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
+import ipaddress
 import json
 import os
 import re
+import socket
 import sqlite3
 import threading
 import time
@@ -62,11 +66,16 @@ class AgentOpsService:
         self.eval_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="agentops-eval")
         self._scheduler_stop = threading.Event()
         self._scheduler_thread: threading.Thread | None = None
+        self._outbox_stop = threading.Event()
+        self._outbox_thread: threading.Thread | None = None
 
     def close(self) -> None:
         self._scheduler_stop.set()
         if self._scheduler_thread is not None:
             self._scheduler_thread.join(timeout=2)
+        self._outbox_stop.set()
+        if self._outbox_thread is not None:
+            self._outbox_thread.join(timeout=2)
         self.run_queue.close()
         self.tool_executor.shutdown(wait=False, cancel_futures=True)
         self.eval_executor.shutdown(wait=False, cancel_futures=True)
@@ -1372,6 +1381,7 @@ ACTUAL: {encode(actual)}""",
         parsed = urllib.parse.urlparse(url)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise ConflictError("webhook URL must use HTTP or HTTPS")
+        self._reject_obviously_private(url)
         with self.db.connect() as connection:
             cursor = connection.execute(
                 """INSERT INTO webhooks(project_id,url,events,created_at)
@@ -1414,34 +1424,227 @@ ACTUAL: {encode(actual)}""",
         return [self.get_webhook(row["id"]) for row in rows]
 
     def _dispatch_webhooks(self, run_id: int, event: str) -> None:
+        """Enqueue webhook and notification deliveries into the outbox.
+
+        Runs in the request path but never blocks on the network: the outbox
+        worker delivers asynchronously with retry/backoff. Idempotency keys
+        (``event:run:destination``) deduplicate repeated dispatches.
+        """
         run = self.get_run(run_id)
         workflow = self.get_workflow(run["workflow_id"])
         for webhook in self.list_webhooks(workflow["project_id"]):
             if not webhook["enabled"] or event not in webhook["events"]:
                 continue
-            error = None
-            status = "delivered"
-            try:
-                self._send_webhook(webhook["url"], {"event": event, "run": run})
-            except Exception as caught:
-                status = "failed"
-                error = str(caught)
+            self._enqueue_outbox(
+                event,
+                f"webhook:{webhook['id']}",
+                {"event": event, "run": run},
+                f"{event}:{run_id}:{webhook['id']}",
+            )
+        if os.getenv("AGENTOPS_SLACK_WEBHOOK_URL"):
+            self._enqueue_outbox(event, "slack", {"run": run}, f"{event}:{run_id}:slack")
+        if os.getenv("AGENTOPS_SMTP_HOST") and os.getenv("AGENTOPS_EMAIL_TO"):
+            self._enqueue_outbox(event, "email", {"run": run}, f"{event}:{run_id}:email")
+
+    def start_outbox_worker(self) -> None:
+        if self._outbox_thread is not None:
+            return
+        self._outbox_thread = threading.Thread(
+            target=self._outbox_loop, name="agentops-outbox", daemon=True
+        )
+        self._outbox_thread.start()
+
+    def _outbox_loop(self) -> None:
+        while not self._outbox_stop.wait(
+            int(os.getenv("AGENTOPS_OUTBOX_POLL_MS", "2000")) / 1000
+        ):
+            # A transient error must not kill the worker thread; the rows stay
+            # pending and are retried on the next poll.
+            with suppress(Exception):
+                for row in self._due_outbox(limit=20):
+                    self._deliver_outbox(row["id"])
+
+    def _due_outbox(self, limit: int = 20) -> list[dict[str, Any]]:
+        with self.db.connect() as connection:
+            rows = connection.execute(
+                """SELECT id FROM outbox_events
+                   WHERE status='pending' AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+                   ORDER BY id LIMIT ?""",
+                (now(), limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def _enqueue_outbox(
+        self, event: str, destination: str, payload: dict[str, Any], idempotency_key: str
+    ) -> None:
+        if self.db.is_postgres:
+            query = (
+                "INSERT INTO outbox_events"
+                "(event,destination,payload,status,next_attempt_at,idempotency_key,created_at)"
+                " VALUES(?,?,?,'pending',?,?,?)"
+                " ON CONFLICT (idempotency_key) DO NOTHING"
+            )
+        else:
+            query = (
+                "INSERT OR IGNORE INTO outbox_events"
+                "(event,destination,payload,status,next_attempt_at,idempotency_key,created_at)"
+                " VALUES(?,?,?,'pending',?,?,?)"
+            )
+        with self.db.connect() as connection:
+            connection.execute(
+                query,
+                (event, destination, encode(payload), now(), idempotency_key, now()),
+            )
+
+    def _deliver_outbox(self, outbox_id: int) -> None:
+        with self.db.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM outbox_events WHERE id=?", (outbox_id,)
+            ).fetchone()
+        if row is None or row["status"] != "pending":
+            return
+        payload = decode(row["payload"])
+        event = row["event"]
+        status = "delivered"
+        error = None
+        webhook_id: int | None = None
+        try:
+            if row["destination"] == "slack":
+                self.notifier._slack(os.environ["AGENTOPS_SLACK_WEBHOOK_URL"], event, payload)
+            elif row["destination"] == "email":
+                self.notifier._email(event, payload)
+            else:
+                webhook_id = int(row["destination"].removeprefix("webhook:"))
+                webhook = self.get_webhook(webhook_id)
+                if not webhook["enabled"]:
+                    status = "dead"
+                else:
+                    self._send_webhook(webhook["url"], payload, delivery_id=outbox_id)
+        except Exception as caught:
+            status = "failed"
+            error = str(caught)
+        if webhook_id is not None:
             with self.db.connect() as connection:
                 connection.execute(
                     """INSERT INTO webhook_deliveries(
                            webhook_id,run_id,event,status,error,created_at
                        ) VALUES(?,?,?,?,?,?)""",
-                    (webhook["id"], run_id, event, status, error, now()),
+                    (
+                        webhook_id,
+                        payload.get("run", {}).get("id"),
+                        event,
+                        "delivered" if status == "delivered" else "failed",
+                        error,
+                        now(),
+                    ),
                 )
-        with suppress(RuntimeError):
-            self.notifier.notify(event, {"run": run})
+        attempts = row["attempts"] + 1
+        if status == "delivered" or attempts >= 6:
+            with self.db.connect() as connection:
+                connection.execute(
+                    "UPDATE outbox_events SET status=?,attempts=?,last_error=? WHERE id=?",
+                    ("delivered" if status == "delivered" else "dead", attempts, error, outbox_id),
+                )
+            return
+        delay = (2, 8, 30, 120, 600)[min(attempts - 1, 4)]
+        with self.db.connect() as connection:
+            connection.execute(
+                "UPDATE outbox_events SET attempts=?,last_error=?,next_attempt_at=? WHERE id=?",
+                (
+                    attempts,
+                    error,
+                    (datetime.now(UTC) + timedelta(seconds=delay)).isoformat(),
+                    outbox_id,
+                ),
+            )
+
+    def list_outbox(self, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        query = "SELECT * FROM outbox_events"
+        params: list[Any] = []
+        if status:
+            query += " WHERE status=?"
+            params.append(status)
+        query += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        with self.db.connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        results = []
+        for row in rows:
+            item = dict(row)
+            item["payload"] = decode(item["payload"])
+            results.append(item)
+        return results
 
     @staticmethod
-    def _send_webhook(url: str, payload: dict[str, Any]) -> None:
-        request = urllib.request.Request(  # noqa: S310 -- validated when webhook is created.
+    def _sign_payload(secret: str, timestamp: str, body: bytes) -> str:
+        digest = hmac.new(secret.encode(), f"{timestamp}.".encode() + body, hashlib.sha256)
+        return f"t={timestamp},v1={digest.hexdigest()}"
+
+    @staticmethod
+    def _reject_obviously_private(url: str) -> None:
+        """Reject clearly-private targets at creation time (fast, no DNS)."""
+        parsed = urllib.parse.urlparse(url)
+        hostname = (parsed.hostname or "").lower()
+        if hostname in {"localhost", "127.0.0.1", "::1"}:
+            raise ValueError("webhook URL must not target localhost")
+        try:
+            address = ipaddress.ip_address(hostname)
+        except ValueError:
+            return
+        if (
+            address.is_private
+            or address.is_loopback
+            or address.is_link_local
+            or address.is_reserved
+            or address.is_multicast
+            or address.is_unspecified
+        ):
+            raise ValueError(f"webhook URL must not target a private address: {hostname}")
+
+    @staticmethod
+    def _assert_public_webhook_url(url: str) -> None:
+        """Full SSRF guard at delivery time: resolved IPs must be public.
+
+        DNS can re-resolve between this check and the request (rebinding);
+        that residual is documented in docs/THREAT_MODEL.md.
+        """
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("webhook URL must use http or https")
+        try:
+            infos = socket.getaddrinfo(parsed.hostname, None)
+        except socket.gaierror as error:
+            raise ValueError(f"webhook host does not resolve: {parsed.hostname}") from error
+        for info in infos:
+            address = ipaddress.ip_address(info[4][0])
+            if (
+                address.is_private
+                or address.is_loopback
+                or address.is_link_local
+                or address.is_reserved
+                or address.is_multicast
+                or address.is_unspecified
+            ):
+                raise ValueError(
+                    f"webhook URL must not resolve to a private address: {address}"
+                )
+
+    def _send_webhook(
+        self, url: str, payload: dict[str, Any], delivery_id: int | None = None
+    ) -> None:
+        self._assert_public_webhook_url(url)
+        body = encode(payload).encode()
+        headers = {"Content-Type": "application/json"}
+        secret = os.getenv("AGENTOPS_WEBHOOK_SECRET")
+        if secret:
+            timestamp = str(int(time.time()))
+            headers["X-AgentOps-Signature"] = self._sign_payload(secret, timestamp, body)
+        if delivery_id is not None:
+            headers["X-AgentOps-Delivery"] = str(delivery_id)
+        request = urllib.request.Request(  # noqa: S310 -- public-address check above.
             url,
-            data=encode(payload).encode(),
-            headers={"Content-Type": "application/json"},
+            data=body,
+            headers=headers,
             method="POST",
         )
         try:

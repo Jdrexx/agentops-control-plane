@@ -90,7 +90,9 @@ def test_schedule_dispatch_and_webhook_delivery(client: TestClient, project: dic
     assert disabled["enabled"] is False
 
     delivered = []
-    client.app.state.service._send_webhook = lambda url, payload: delivered.append((url, payload))
+    client.app.state.service._send_webhook = (
+        lambda url, payload, delivery_id=None: delivered.append((url, payload, delivery_id))
+    )
     webhook = client.post(
         "/api/webhooks",
         json={
@@ -101,6 +103,10 @@ def test_schedule_dispatch_and_webhook_delivery(client: TestClient, project: dic
     )
     assert webhook.status_code == 201
     run = client.post(f"/api/workflows/{workflow['id']}/runs", json={"input": "notify"}).json()
+    deadline = time.monotonic() + 5
+    while not delivered and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert delivered, "outbox worker did not deliver the webhook"
     assert delivered[0][0] == "https://hooks.example.test/runs"
     assert delivered[0][1]["run"]["id"] == run["id"]
     assert client.get(f"/api/webhooks?project_id={project['id']}").json()[0]["events"] == [

@@ -22,7 +22,7 @@ Default local mode assumes a trusted operator and loopback-only exposure. Any ne
 
 - Workflow inputs remain plaintext in operational tables so interrupted runs and exact replay work. Do not place raw credentials in workflow input; store them in the encrypted secrets API and pass only references.
 - The built-in worker executes trusted adapters in-process. New shell, browser, or arbitrary-code tools require a separate sandboxed worker with an explicit capability policy.
-- Outbound webhook URLs are administrator-controlled but can reach network-visible HTTP services. Hosted deployments should enforce an outbound proxy or network allowlist.
+- Outbound webhook and notification delivery is queued in an outbox with retry/backoff and dead-lettering, so failures never block run completion. Webhook URLs are rejected at creation if they target clearly-private addresses and at delivery if any resolved address is private, loopback, link-local, or reserved (SSRF guard). Residual risk: DNS may re-resolve between the check and the request (rebinding); a hosted deployment should still enforce an outbound proxy or network allowlist. Deliveries are HMAC-signed (`X-AgentOps-Signature`) when `AGENTOPS_WEBHOOK_SECRET` is configured.
 - The local scheduler and executor are single-instance. Multi-replica deployment requires distributed leases or a queue to prevent duplicate scheduled dispatch.
 - Rate limits are per process. Use an edge or shared limiter for multi-replica deployments.
 - The dashboard stores its bearer token in session storage. CSP and output escaping reduce XSS risk; hardened deployments should use short-lived credentials.
