@@ -133,8 +133,8 @@ def test_concurrent_migrations_do_not_race(tmp_path: Path):
         thread.start()
     for thread in threads:
         thread.join()
-    assert sorted(results[0]) == ALL_VERSIONS
-    assert results[1] == []
+    applied_sets = sorted(sorted(result) for result in results)
+    assert applied_sets == [[], ALL_VERSIONS], results
     with Database(path).connect() as connection:
         assert (
             connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
