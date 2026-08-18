@@ -39,6 +39,14 @@ def test_mock_provider_uses_pinned_script(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert ProviderRegistry().generate("mock", "mock-small", "pinned prompt") == "PINNED RESPONSE"
 
 
+def test_mock_provider_failure_injection(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    monkeypatch.setenv("AGENTOPS_MOCK_SCRIPT_DIR", str(tmp_path))
+    fingerprint = _mock_fingerprint("mock-small", "", "failing prompt")
+    (tmp_path / f"{fingerprint[:16]}.fail").write_text("connection refused to billing-api.internal")
+    with pytest.raises(ProviderError, match="connection refused"):
+        ProviderRegistry().generate("mock", "mock-small", "failing prompt")
+
+
 def test_mock_provider_different_prompts_differ():
     registry = ProviderRegistry()
     assert registry.generate("mock", "mock-small", "question one") != registry.generate(

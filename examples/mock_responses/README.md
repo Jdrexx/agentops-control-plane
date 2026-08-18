@@ -30,6 +30,9 @@ verbatim. Otherwise a stable synthetic filler is generated.
 
 - One pinned script per prompt configuration; name it after the fingerprint.
 - Keep scripts short and synthetic. Never pin real customer data.
+- A `<fingerprint>.fail` file makes the same prompt raise a deterministic
+  `ProviderError` whose message is the file contents — offline failure
+  injection for incident demos and retry-path tests.
 - The same pinning works for `llm_judge` evaluation prompts, so an evaluation
   can be made to fail on workflow v1 and pass on v2 in a demo.
 - Set `AGENTOPS_MOCK_CHUNK_MS=35` for demos (the live stream panel visibly
