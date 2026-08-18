@@ -395,14 +395,16 @@ def test_tool_catalog_history_and_run_comparison(client: TestClient, project: di
 
 
 def test_llm_tool_uses_provider_boundary(client: TestClient, project: dict):
+    from src.agentops.providers import ProviderResult
+
     calls = []
 
-    def generate(provider: str, model: str, prompt: str, system: str = "", on_chunk=None) -> str:
+    def generate_detailed(provider: str, model: str, prompt: str, system: str = "", on_chunk=None):
         calls.append((provider, model, prompt, system))
         on_chunk("model response")
-        return "model response"
+        return ProviderResult("model response", provider, model, input_tokens=11, output_tokens=7)
 
-    client.app.state.service.providers.generate = generate
+    client.app.state.service.providers.generate_detailed = generate_detailed
     workflow = create_workflow(
         client,
         project["id"],
@@ -423,6 +425,8 @@ def test_llm_tool_uses_provider_boundary(client: TestClient, project: dict):
     assert run["status"] == "completed"
     assert run["output"] == "model response"
     assert calls == [("openai", "test-model", "Question: hello", "Be concise")]
+    assert run["spans"][0]["input_tokens"] == 11
+    assert run["spans"][0]["output_tokens"] == 7
     assert {item["name"] for item in client.get("/api/providers").json()} == {
         "mock",
         "ollama",
