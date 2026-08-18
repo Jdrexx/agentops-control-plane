@@ -2,7 +2,7 @@ services:
   agentops:
     build: .
     ports:
-      - "8110:8110"
+      - "127.0.0.1:8110:8110"
     environment:
       AGENTOPS_DATABASE: /data/agentops.db
       AGENTOPS_API_KEY: ${AGENTOPS_API_KEY:-}
@@ -20,7 +20,7 @@ services:
     profiles: ["postgres"]
     build: .
     ports:
-      - "8111:8110"
+      - "127.0.0.1:8111:8110"
     environment:
       DATABASE_URL: postgresql://agentops:agentops@postgres:5432/agentops
       AGENTOPS_API_KEY: ${AGENTOPS_API_KEY:-}

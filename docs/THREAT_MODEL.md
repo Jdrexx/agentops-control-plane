@@ -2,7 +2,7 @@
 
 ## Trust modes
 
-Default local mode assumes a trusted operator and loopback-only exposure. Hosted mode requires `AGENTOPS_API_KEY`, `AGENTOPS_ENCRYPTION_KEY`, TLS at the platform proxy, and a PostgreSQL or persistent SQLite volume.
+Default local mode assumes a trusted operator and loopback-only exposure. Any network-exposed mode requires `AGENTOPS_API_KEY`, `AGENTOPS_ENCRYPTION_KEY`, TLS at a trusted reverse proxy, and a PostgreSQL database or persistent SQLite volume.
 
 ## Controls implemented
 
@@ -29,7 +29,7 @@ Default local mode assumes a trusted operator and loopback-only exposure. Hosted
 
 ## Operational requirements
 
-- Terminate TLS at Railway or another trusted reverse proxy.
+- Terminate TLS at a trusted reverse proxy before allowing network access.
 - Use independent random values for API and encryption keys.
 - Restrict provider keys to the minimum provider permissions and budgets.
 - Back up the database and encryption key separately.

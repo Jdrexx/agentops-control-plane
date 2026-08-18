@@ -1,70 +1,82 @@
-# Deployment
+# Running the proof of concept
 
-## Railway
+The portfolio version is designed to run on a personal machine without a cloud
+service. Docker Compose provides the most reproducible review path, while a native
+Python process is convenient during development.
 
-`railway.json` selects the Dockerfile, gates deployments on dependency-aware
-`/api/ready`, and restarts failed containers. Provision a persistent volume for
-SQLite or a PostgreSQL service that exposes `DATABASE_URL`.
+## Docker Compose
 
-Required production variables:
-
-- `AGENTOPS_API_KEY`: long random bootstrap administrator token
-- `AGENTOPS_ENCRYPTION_KEY`: independent long random encryption secret
-
-Optional variables:
-
-- `DATABASE_URL`: automatically provided by Railway PostgreSQL
-- `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `OLLAMA_HOST`
-- `AGENTOPS_OTLP_ENDPOINT`: HTTP collector endpoint for trace export
-- `AGENTOPS_SLACK_WEBHOOK_URL`: Slack incoming webhook for run and approval notifications
-- `AGENTOPS_SMTP_*` and `AGENTOPS_EMAIL_*`: TLS SMTP notification settings
-
-The app listens on Railway's injected `PORT` value. After deployment, verify
-`/api/health` for process liveness and `/api/ready` for database and queue
-readiness, then authenticate API requests with
-`Authorization: Bearer <AGENTOPS_API_KEY>`.
-
-## Staging smoke test
-
-Keep staging on a database and Redis instance that are distinct from production.
-The reusable smoke command authenticates as the staging administrator, reuses a
-dedicated fixture project and workflow, submits a queued run, waits for the
-worker, and verifies its recorded trace. It refuses non-staging hostnames unless
-explicitly overridden.
+Start the complete single-process application with persistent local data:
 
 ```bash
-railway run --environment staging --service agentops-control-plane \
-  .venv/bin/python scripts/staging_smoke.py \
-  --base-url https://agentops-control-plane-staging.up.railway.app
+docker compose up --build agentops
 ```
 
-Run it after staging deployments and before promoting higher-risk changes. It
-creates the fixture once and adds one run record per invocation.
+Open <http://127.0.0.1:8110>. The `agentops-data` volume preserves the SQLite database
+between container restarts. The application uses its in-process worker and scheduler,
+so no database or queue service needs to be purchased or maintained.
 
-## Optional integration activation
+Use the optional PostgreSQL profile only when demonstrating database portability:
 
-Provider, telemetry, and notification integrations are optional and remain
-disabled when their variables are absent. Activate them one at a time in
-staging before copying configuration to production:
+```bash
+docker compose --profile postgres up --build agentops-postgres
+```
 
-1. **Model provider:** configure one of `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
-   or `OLLAMA_HOST`; verify `/api/providers`; then run one budget-limited `llm`
-   workflow.
-2. **Trace export:** configure `AGENTOPS_OTLP_ENDPOINT` for a staging collector,
-   complete one workflow, and verify that the collector received the trace.
-3. **Notifications:** configure either `AGENTOPS_SLACK_WEBHOOK_URL` or the
-   `AGENTOPS_SMTP_*` and `AGENTOPS_EMAIL_*` variables, trigger one controlled
-   failed run and approval event, and verify delivery.
-4. Use independent staging credentials and destinations. Promote only the
-   variable names and tested configuration pattern, never staging secrets.
+That profile is a local demonstration configuration. Replace its example password
+before using it on any shared network.
 
-Do not make deployment readiness depend on these optional destinations; a
-provider or notification outage must not make the control plane unavailable.
+## Native Python
 
-## Docker
+```bash
+uv sync
+uv run uvicorn src.agentops.main:app --reload --host 127.0.0.1 --port 8110
+```
 
-The image runs as an unprivileged user and uses a multi-stage-like dependency install with the locked production environment. Mount `/data` when using SQLite. The Compose PostgreSQL profile is intended for local parity; replace its demonstration password in any shared environment.
+The default database is `data/agentops.db`. Set `AGENTOPS_DATABASE` to choose another
+SQLite path. Open `/api/health` for liveness, `/api/ready` for database and queue
+readiness, and `/docs` for the interactive API reference.
 
-## Scaling
+## Portfolio review flow
 
-Run one application replica with the built-in scheduler. Horizontal scaling requires moving queued execution and schedule leasing to a distributed worker. PostgreSQL is recommended before introducing external workers.
+1. Open the dashboard and select **Load demo workflow**.
+2. Run the generated workflow and inspect its step trace and metrics.
+3. Demonstrate replay, approval, evaluation, project export, and role-aware APIs as
+   relevant to the conversation.
+4. Show `docs/ARCHITECTURE.md` and the passing CI checks to explain the design and
+   engineering tradeoffs.
+
+The built-in workflow tools do not require model-provider credentials. Add an
+`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or local `OLLAMA_HOST` only when an LLM step is
+part of the demonstration.
+
+## Network exposure
+
+The default configuration assumes loopback-only access. For an occasional remote
+demonstration, prefer a screen share or a short-lived authenticated tunnel rather than
+an always-on paid deployment. Before accepting network traffic:
+
+- set independent, long random values for `AGENTOPS_API_KEY` and
+  `AGENTOPS_ENCRYPTION_KEY`;
+- terminate TLS at a trusted reverse proxy or tunnel;
+- keep the SQLite data directory persistent and backed up;
+- restrict access to the intended reviewers; and
+- remove the public route when the demonstration ends.
+
+Authenticate API requests with `Authorization: Bearer <AGENTOPS_API_KEY>`. Review the
+[threat model](THREAT_MODEL.md) before exposing the application.
+
+## Optional integrations
+
+Provider, telemetry, and notification integrations remain disabled when their variables
+are absent. They are portable environment-variable integrations rather than hosting
+requirements:
+
+- `DATABASE_URL`: optional PostgreSQL database
+- `REDIS_URL`: optional durable run queue for separated workers
+- `AGENTOPS_OTLP_ENDPOINT`: optional HTTP trace collector
+- `AGENTOPS_SLACK_WEBHOOK_URL`: optional Slack notifications
+- `AGENTOPS_SMTP_*` and `AGENTOPS_EMAIL_*`: optional TLS SMTP notifications
+
+The default `AGENTOPS_PROCESS_MODE=all` is appropriate for the proof of concept. A
+future multi-service deployment can use `web`, `worker`, and `scheduler` modes with
+PostgreSQL and Redis. That expansion is intentionally not required for personal use.

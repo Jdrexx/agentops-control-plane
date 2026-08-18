@@ -1,6 +1,8 @@
 # AgentOps Control Plane
 
-A local-first control plane for building, running, approving, evaluating, and observing AI-agent workflows.
+A local-first control plane for building, running, approving, evaluating, and observing
+AI-agent workflows. This repository is a portfolio proof of concept: it runs entirely on
+your machine and does not require a paid hosting account.
 
 ## Product capabilities
 
@@ -17,7 +19,20 @@ A local-first control plane for building, running, approving, evaluating, and ob
 - Durable Redis-backed run queues with atomic PostgreSQL claims and local fallback
 - Streamed Ollama, OpenAI, and Anthropic output over the live dashboard channel
 - Starter workflow templates and project-level team membership roles
-- SQLite or PostgreSQL persistence, Docker, Compose, Railway, and project import/export
+- SQLite or PostgreSQL persistence, Docker, Compose, and project import/export
+
+## Quick portfolio demo
+
+The fastest way to review the complete application is Docker Compose:
+
+```bash
+docker compose up --build agentops
+```
+
+Open <http://127.0.0.1:8110> and select **Load demo workflow**. The demo uses SQLite,
+keeps its data in the local `agentops-data` Docker volume, and runs queued work in the
+application process. No PostgreSQL, Redis, cloud account, or model-provider key is
+required for the built-in workflow tools.
 
 ## Local development
 
@@ -46,19 +61,21 @@ Provider keys are read from `OPENAI_API_KEY` and `ANTHROPIC_API_KEY`. Ollama def
 
 ## Containers
 
-SQLite with a persistent volume:
+The default personal-use configuration is the same one used by the quick demo:
 
 ```bash
 docker compose up --build agentops
 ```
 
-PostgreSQL profile:
+An optional PostgreSQL profile is available for demonstrating the portable database
+layer:
 
 ```bash
 docker compose --profile postgres up --build agentops-postgres
 ```
 
 The SQLite service listens on port 8110; the PostgreSQL-backed service listens on 8111.
+Neither configuration depends on a particular hosting provider.
 
 ## Workflow tools
 
@@ -74,12 +91,16 @@ uv run pytest --cov=src.agentops --cov-report=term-missing
 node --check src/agentops/static/app.js
 ```
 
-See [Architecture](docs/ARCHITECTURE.md), [Deployment](docs/DEPLOYMENT.md), and [Threat Model](docs/THREAT_MODEL.md).
+See [Architecture](docs/ARCHITECTURE.md), [Deployment](docs/DEPLOYMENT.md),
+[Next steps](docs/NEXT_STEPS.md), and [Threat Model](docs/THREAT_MODEL.md).
 
-Production operators should also follow [Backup and recovery](docs/BACKUP_AND_RECOVERY.md).
+If you later expose the application outside a trusted machine, follow the network-exposed
+guidance in [Deployment](docs/DEPLOYMENT.md), [Threat Model](docs/THREAT_MODEL.md), and
+[Backup and recovery](docs/BACKUP_AND_RECOVERY.md).
 
-Set `AGENTOPS_PROCESS_MODE` to `web`, `worker`, or `scheduler` for separated hosted
-services. The default `all` mode remains convenient for local development.
+The default `AGENTOPS_PROCESS_MODE=all` keeps the web app, worker, and scheduler in one
+process for personal use. The `web`, `worker`, and `scheduler` modes remain available for
+future multi-service deployments.
 
 ## License
 
