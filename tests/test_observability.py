@@ -4,7 +4,13 @@ from .conftest import create_workflow
 
 
 def test_usage_alerts_otel_and_live_stream(client: TestClient, project: dict):
-    client.app.state.service.providers.generate = lambda *_args: "generated response"
+    from src.agentops.providers import ProviderResult
+
+    client.app.state.service.providers.generate_detailed = (
+        lambda *_args, **_kwargs: ProviderResult(
+            "generated response", "ollama", "test", input_tokens=5, output_tokens=7
+        )
+    )
     workflow = create_workflow(
         client,
         project["id"],

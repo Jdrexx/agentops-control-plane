@@ -301,6 +301,7 @@ class AgentOpsService:
             retry_delay = min(max(float(config.get("retry_delay_seconds", 0)), 0), 5)
             error: Exception | None = None
             output: Any = None
+            llm_usage: dict[str, Any] | None = None
             for attempt in range(retries + 1):
                 try:
                     if step["tool"] == "approval":
@@ -310,21 +311,20 @@ class AgentOpsService:
                         output = self._apply_agent_tool(
                             run_id, workflow, step["tool"], config, value
                         )
+                    elif step["tool"] == "llm":
+                        self._agent_event(run_id, "llm.started", {"step_index": index})
+                        runtime_config = {
+                            **config,
+                            "_on_chunk": lambda chunk, step_index=index: self._agent_event(
+                                run_id,
+                                "llm.chunk",
+                                {"step_index": step_index, "text": chunk},
+                            ),
+                        }
+                        output, llm_usage = self._invoke_llm(runtime_config, value)
+                        self._agent_event(run_id, "llm.completed", {"step_index": index})
                     else:
-                        runtime_config = config
-                        if step["tool"] == "llm":
-                            self._agent_event(run_id, "llm.started", {"step_index": index})
-                            runtime_config = {
-                                **config,
-                                "_on_chunk": lambda chunk, step_index=index: self._agent_event(
-                                    run_id,
-                                    "llm.chunk",
-                                    {"step_index": step_index, "text": chunk},
-                                ),
-                            }
-                        output = self._invoke_tool(step["tool"], runtime_config, value)
-                        if step["tool"] == "llm":
-                            self._agent_event(run_id, "llm.completed", {"step_index": index})
+                        output = self._invoke_tool(step["tool"], config, value)
                     error = None
                     break
                 except Exception as caught:
@@ -335,7 +335,9 @@ class AgentOpsService:
                 return
             if error is not None:
                 duration = (time.perf_counter() - started) * 1000
-                self._record_span(run_id, index, step, value, None, "failed", str(error), duration)
+                self._record_span(
+                    run_id, index, step, value, None, "failed", str(error), duration, llm_usage
+                )
                 with self.db.connect() as connection:
                     connection.execute(
                         """UPDATE runs
@@ -347,7 +349,9 @@ class AgentOpsService:
                 self._export_otel_if_configured(run_id)
                 return
             duration = (time.perf_counter() - started) * 1000
-            self._record_span(run_id, index, step, value, output, "completed", None, duration)
+            self._record_span(
+                run_id, index, step, value, output, "completed", None, duration, llm_usage
+            )
             value = output
             with self.db.connect() as connection:
                 connection.execute(
@@ -457,6 +461,35 @@ class AgentOpsService:
         except FutureTimeoutError as error:
             future.cancel()
             raise TimeoutError(f"step timed out after {timeout:g} seconds") from error
+
+    def _invoke_llm(self, config: dict[str, Any], value: Any) -> tuple[Any, dict[str, Any]]:
+        """Invoke an LLM step under its optional timeout; returns (text, usage)."""
+        timeout = min(max(float(config.get("timeout_seconds", 0)), 0), 300)
+        if timeout == 0:
+            return self._apply_llm(config, value)
+        future = self.tool_executor.submit(self._apply_llm, config, value)
+        try:
+            return future.result(timeout=timeout)
+        except FutureTimeoutError as error:
+            future.cancel()
+            raise TimeoutError(f"step timed out after {timeout:g} seconds") from error
+
+    def _apply_llm(self, config: dict[str, Any], value: Any) -> tuple[Any, dict[str, Any]]:
+        rendered = value if isinstance(value, str) else encode(value)
+        prompt = str(config.get("prompt", "{value}")).replace("{value}", rendered)
+        result = self.providers.generate_detailed(
+            str(config.get("provider", "ollama")),
+            str(config.get("model", "")),
+            prompt,
+            str(config.get("system", "")),
+            config.get("_on_chunk"),
+        )
+        usage = {
+            "input_tokens": result.input_tokens,
+            "output_tokens": result.output_tokens,
+            "finish_reason": result.finish_reason,
+        }
+        return result.text, {key: value for key, value in usage.items() if value is not None}
 
     def _apply_agent_tool(
         self,
@@ -678,14 +711,21 @@ class AgentOpsService:
         status: str,
         error: str | None,
         duration: float,
+        usage: dict[str, Any] | None = None,
     ) -> None:
         config = step.get("config", {})
         input_tokens = 0
         output_tokens = 0
         cost_usd = 0.0
         if step["tool"] == "llm":
-            input_tokens = max(1, len(encode(input_value)) // 4)
-            output_tokens = max(1, len(encode(output)) // 4) if output is not None else 0
+            if usage:
+                input_tokens = max(1, int(usage.get("input_tokens") or 0))
+                output_tokens = (
+                    max(1, int(usage.get("output_tokens") or 0)) if output is not None else 0
+                )
+            else:
+                input_tokens = max(1, len(encode(input_value)) // 4)
+                output_tokens = max(1, len(encode(output)) // 4) if output is not None else 0
             cost_usd = (
                 input_tokens * float(config.get("input_cost_per_1k", 0))
                 + output_tokens * float(config.get("output_cost_per_1k", 0))
