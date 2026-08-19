@@ -455,6 +455,7 @@ def create_app(database_path: str | None = None) -> FastAPI:
             body.note,
             body.output,
             "output" in body.model_fields_set,
+            actor=request.state.actor,
         )
 
     @app.post("/api/approvals/{approval_id}/escalate")

@@ -63,6 +63,8 @@ CREATE TABLE IF NOT EXISTS approvals (
   prompt TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending',
   note TEXT NOT NULL DEFAULT '',
+  policy TEXT,
+  decided_by TEXT,
   created_at TEXT NOT NULL,
   decided_at TEXT,
   expires_at TEXT,

@@ -26,7 +26,7 @@ from .database import Database
 from .notifications import Notifier
 from .providers import ProviderRegistry
 from .queue import RunQueue
-from .security import SecretVault, redact, token_hash
+from .security import Actor, SecretVault, redact, token_hash
 from .templates import WORKFLOW_TEMPLATES
 
 
@@ -430,6 +430,9 @@ class AgentOpsService:
     ) -> None:
         prompt = str(step.get("config", {}).get("prompt", "Approve this workflow?"))
         expires_in = int(step.get("config", {}).get("expires_in_seconds", 0))
+        approver_roles = step.get("config", {}).get(
+            "approver_roles", ["admin", "operator"]
+        )
         expires_at = (
             (datetime.now(UTC) + timedelta(seconds=expires_in)).isoformat()
             if expires_in > 0
@@ -440,9 +443,17 @@ class AgentOpsService:
         with self.db.connect() as connection:
             connection.execute(
                 """INSERT INTO approvals(
-                       run_id, step_index, prompt, status, created_at, expires_at
-                   ) VALUES (?, ?, ?, ?, ?, ?)""",
-                (run_id, index, prompt, "pending", now(), expires_at),
+                       run_id, step_index, prompt, status, policy, created_at, expires_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    run_id,
+                    index,
+                    prompt,
+                    "pending",
+                    encode({"approver_roles": approver_roles}),
+                    now(),
+                    expires_at,
+                ),
             )
             connection.execute(
                 "UPDATE runs SET status='waiting_approval',output=?,current_step=? WHERE id=?",
@@ -888,6 +899,7 @@ class AgentOpsService:
         note: str,
         output: Any = None,
         output_supplied: bool = False,
+        actor: Actor | None = None,
     ) -> dict[str, Any]:
         rejected_run_id: int | None = None
         with self.db.connect() as connection:
@@ -898,9 +910,27 @@ class AgentOpsService:
                 raise NotFoundError("approval not found")
             if approval["status"] != "pending":
                 raise ConflictError("approval has already been decided")
+            if (
+                approval["expires_at"] is not None
+                and approval["expires_at"] <= now()
+            ):
+                # Materialize the derived state at the moment it matters.
+                connection.execute(
+                    "UPDATE approvals SET status='expired' WHERE id=? AND status='pending'",
+                    (approval_id,),
+                )
+                raise ConflictError("approval has expired")
+            policy = decode(approval["policy"]) if approval["policy"] else {}
+            approver_roles = policy.get("approver_roles") or ["admin", "operator"]
+            actor_name = actor.name if actor is not None else "unknown"
+            actor_role = actor.role if actor is not None else "admin"
+            if actor_role not in approver_roles:
+                raise ConflictError(
+                    f"role {actor_role} is not allowed to decide this approval"
+                )
             connection.execute(
-                "UPDATE approvals SET status=?,note=?,decided_at=? WHERE id=?",
-                (decision, note, now(), approval_id),
+                "UPDATE approvals SET status=?,note=?,decided_at=?,decided_by=? WHERE id=?",
+                (decision, note, now(), actor_name, approval_id),
             )
             if decision == "rejected":
                 connection.execute(
@@ -984,13 +1014,23 @@ class AgentOpsService:
     def list_approvals(
         self, status: str | None = None, project_ids: set[int] | None = None
     ) -> list[dict[str, Any]]:
-        query = """SELECT a.* FROM approvals a
+        """List approvals, deriving expiry at read time.
+
+        Expiry is computed in the query (a pending approval past its
+        ``expires_at`` reads as ``expired``) so correctness never depends on
+        the scheduler sweep having run.
+        """
+        query = """SELECT a.*,
+                          CASE WHEN a.status='pending'
+                                AND a.expires_at IS NOT NULL AND a.expires_at <= ?
+                               THEN 'expired' ELSE a.status END AS effective_status
+                   FROM approvals a
                    JOIN runs r ON r.id=a.run_id
                    JOIN workflows w ON w.id=r.workflow_id"""
         conditions: list[str] = []
-        params: list[Any] = []
+        params: list[Any] = [now()]
         if status is not None:
-            conditions.append("a.status=?")
+            conditions.append("effective_status=?")
             params.append(status)
         if project_ids is not None:
             if not project_ids:
@@ -1003,7 +1043,13 @@ class AgentOpsService:
         query += " ORDER BY a.created_at DESC"
         with self.db.connect() as connection:
             rows = connection.execute(query, params).fetchall()
-        return [dict(row) for row in rows]
+        results = []
+        for row in rows:
+            item = dict(row)
+            item["policy"] = decode(item["policy"]) if item.get("policy") else {}
+            item["status"] = item.pop("effective_status")
+            results.append(item)
+        return results
 
     def replay(self, run_id: int) -> dict[str, Any]:
         run = self.get_run(run_id, redact_sensitive=False)

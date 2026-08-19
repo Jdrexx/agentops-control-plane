@@ -74,6 +74,18 @@ class Step(BaseModel):
             raise ValueError("config.allowed_roles must be a non-empty list of valid roles")
         if self.tool == "approval":
             integer("expires_in_seconds", 0, 31_536_000)
+            approver_roles = self.config.get("approver_roles")
+            if approver_roles is not None and (
+                not isinstance(approver_roles, list)
+                or not approver_roles
+                or any(
+                    not isinstance(role, str) or role not in {"admin", "operator", "viewer"}
+                    for role in approver_roles
+                )
+            ):
+                raise ValueError(
+                    "config.approver_roles must be a non-empty list of valid roles"
+                )
         if self.tool == "handoff":
             if "workflow_id" not in self.config:
                 raise ValueError("config.workflow_id is required for handoff steps")
