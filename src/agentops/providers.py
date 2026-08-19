@@ -144,6 +144,7 @@ class ProviderRegistry:
         prompt: str,
         system: str = "",
         on_chunk: Callable[[str], None] | None = None,
+        api_key: str | None = None,
     ) -> ProviderResult:
         """Generate text and return the result with usage metadata.
 
@@ -152,7 +153,8 @@ class ProviderRegistry:
         Retries: 408/429/5xx and transport errors retry up to
         ``AGENTOPS_PROVIDER_RETRIES`` (default 2) times with backoff,
         honoring ``Retry-After``. Authentication and invalid-request errors
-        never retry.
+        never retry. ``api_key`` overrides the environment key (used for
+        project secrets referenced by ``credential_ref``).
         """
         if provider not in PROVIDERS:
             raise ProviderError(f"unknown provider: {provider}")
@@ -185,7 +187,7 @@ class ProviderRegistry:
                 finish_reason="stop",
                 latency_ms=_elapsed(started),
             )
-        api_key = os.getenv(config.api_key_env or "")
+        api_key = api_key or os.getenv(config.api_key_env or "")
         if not api_key:
             raise ProviderError(f"{config.api_key_env} is not configured")
         if provider == "openai":
@@ -352,18 +354,32 @@ class ProviderRegistry:
                                 break
                         if not line:
                             continue
-                        chunk = extract(json.loads(line))
+                        try:
+                            chunk = extract(json.loads(line))
+                        except json.JSONDecodeError as error:
+                            # A malformed event must fail the step, never return
+                            # truncated text as a successful result.
+                            raise ProviderError(
+                                f"provider stream returned malformed JSON: {error}"
+                            ) from error
                         if chunk:
                             chunks.append(chunk)
                             on_chunk(chunk)
                 last_error = None
                 break
-            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
+            except ProviderError:
+                raise
+            except (urllib.error.URLError, TimeoutError) as error:
+                if chunks:
+                    # Chunks were already published to consumers; retrying
+                    # would duplicate the output, so fail the step instead.
+                    raise ProviderError(
+                        f"provider stream failed after partial output: {error}"
+                    ) from error
                 last_error = error
-                if not _retryable(error) or attempt == retries:
+                if attempt == retries:
                     break
-                chunks.clear()
                 time.sleep(_backoff_delay(error, attempt))
-        if last_error is not None and not isinstance(last_error, json.JSONDecodeError):
+        if last_error is not None:
             raise ProviderError(f"provider stream failed: {last_error}") from last_error
         return "".join(chunks)
