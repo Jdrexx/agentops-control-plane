@@ -70,9 +70,9 @@ def test_encrypted_secrets_and_trace_redaction(tmp_path: Path, monkeypatch):
             headers=headers,
         ).json()
         assert "top-secret" not in str(secret)
-        assert client.get(f"/api/secrets/{secret['id']}/reveal", headers=headers).json() == {
-            "value": "top-secret"
-        }
+        revealed = client.post(f"/api/secrets/{secret['id']}/reveal", headers=headers).json()
+        assert revealed == {"value": "top-secret"}
+        assert client.get(f"/api/secrets/{secret['id']}/reveal", headers=headers).status_code == 405
         with client.app.state.service.db.connect() as connection:
             ciphertext = connection.execute(
                 "SELECT ciphertext FROM secrets WHERE id=?", (secret["id"],)

@@ -611,8 +611,9 @@ def create_app(database_path: str | None = None) -> FastAPI:
         require_project_access(request, project_id)
         return service(request).list_secrets(project_id)
 
-    @app.get("/api/secrets/{secret_id}/reveal")
+    @app.post("/api/secrets/{secret_id}/reveal")
     def reveal_secret(secret_id: int, request: Request):
+        # POST (not GET) so the audit middleware records every reveal.
         return {"value": service(request).reveal_secret(secret_id)}
 
     @app.get("/api/audit")

@@ -399,7 +399,9 @@ def test_llm_tool_uses_provider_boundary(client: TestClient, project: dict):
 
     calls = []
 
-    def generate_detailed(provider: str, model: str, prompt: str, system: str = "", on_chunk=None):
+    def generate_detailed(
+        provider: str, model: str, prompt: str, system: str = "", on_chunk=None, api_key=None
+    ):
         calls.append((provider, model, prompt, system))
         on_chunk("model response")
         return ProviderResult("model response", provider, model, input_tokens=11, output_tokens=7)

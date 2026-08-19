@@ -321,7 +321,9 @@ class AgentOpsService:
                                 {"step_index": step_index, "text": chunk},
                             ),
                         }
-                        output, llm_usage = self._invoke_llm(runtime_config, value)
+                        output, llm_usage = self._invoke_llm(
+                            workflow["project_id"], runtime_config, value
+                        )
                         self._agent_event(run_id, "llm.completed", {"step_index": index})
                     else:
                         output = self._invoke_tool(step["tool"], config, value)
@@ -462,27 +464,36 @@ class AgentOpsService:
             future.cancel()
             raise TimeoutError(f"step timed out after {timeout:g} seconds") from error
 
-    def _invoke_llm(self, config: dict[str, Any], value: Any) -> tuple[Any, dict[str, Any]]:
+    def _invoke_llm(
+        self, project_id: int, config: dict[str, Any], value: Any
+    ) -> tuple[Any, dict[str, Any]]:
         """Invoke an LLM step under its optional timeout; returns (text, usage)."""
         timeout = min(max(float(config.get("timeout_seconds", 0)), 0), 300)
         if timeout == 0:
-            return self._apply_llm(config, value)
-        future = self.tool_executor.submit(self._apply_llm, config, value)
+            return self._apply_llm(project_id, config, value)
+        future = self.tool_executor.submit(self._apply_llm, project_id, config, value)
         try:
             return future.result(timeout=timeout)
         except FutureTimeoutError as error:
             future.cancel()
             raise TimeoutError(f"step timed out after {timeout:g} seconds") from error
 
-    def _apply_llm(self, config: dict[str, Any], value: Any) -> tuple[Any, dict[str, Any]]:
+    def _apply_llm(
+        self, project_id: int, config: dict[str, Any], value: Any
+    ) -> tuple[Any, dict[str, Any]]:
         rendered = value if isinstance(value, str) else encode(value)
         prompt = str(config.get("prompt", "{value}")).replace("{value}", rendered)
+        api_key = None
+        credential_ref = config.get("credential_ref")
+        if credential_ref:
+            api_key = self.reveal_secret_named(project_id, str(credential_ref))
         result = self.providers.generate_detailed(
             str(config.get("provider", "ollama")),
             str(config.get("model", "")),
             prompt,
             str(config.get("system", "")),
             config.get("_on_chunk"),
+            api_key=api_key,
         )
         usage = {
             "input_tokens": result.input_tokens,
@@ -1838,6 +1849,16 @@ ACTUAL: {encode(actual)}""",
         if row is None:
             raise NotFoundError("secret not found")
         return self.vault.decrypt(row["ciphertext"])
+
+    def reveal_secret_named(self, project_id: int, name: str) -> str:
+        """Decrypt a project secret by name — the LLM-step ``credential_ref`` path."""
+        with self.db.connect() as connection:
+            row = connection.execute(
+                "SELECT id FROM secrets WHERE project_id=? AND name=?", (project_id, name)
+            ).fetchone()
+        if row is None:
+            raise ValueError(f"credential_ref '{name}' not found in this project")
+        return self.reveal_secret(int(row["id"]))
 
     def audit(self, actor: str, action: str, resource: str, status_code: int) -> None:
         with self.db.connect() as connection:

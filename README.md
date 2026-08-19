@@ -47,7 +47,7 @@ flowchart LR
 | Alerts | API |
 | Notifications (Slack, email) | Env-configured |
 | Project import/export (versioned package) | API |
-| Encrypted secrets vault | API |
+| Encrypted secrets vault (`credential_ref` in LLM steps) | API + workflow config |
 | Authentication, roles, audit log, trace redaction | Dashboard + API |
 | OTLP-shaped trace export | Experimental |
 | S3-compatible backups (checksummed; not client-side encrypted) | Script / Docker backup mode |
@@ -128,7 +128,7 @@ Neither configuration depends on a particular hosting provider.
 
 `input`, `template`, `uppercase`, `lowercase`, `json_extract`, `llm`, `memory_read`, `memory_write`, `handoff`, `approval`, and `fail`.
 
-Every step configuration may include `retries`, `retry_delay_seconds`, `timeout_seconds`, and `allowed_roles`. LLM steps also accept provider, model, system, prompt, and optional per-1K-token cost rates. Approval steps accept a prompt and `expires_in_seconds`.
+Every step configuration may include `retries`, `retry_delay_seconds`, `timeout_seconds`, and `allowed_roles`. LLM steps also accept provider, model, system, prompt, `credential_ref` (a project secret used as the API key instead of the environment variable), and optional per-1K-token cost rates. Approval steps accept a prompt and `expires_in_seconds`.
 
 A built-in deterministic `mock` provider (model `mock-small`) generates byte-identical
 offline output with no key and no network — useful for demos, tests, and CI. It
@@ -167,9 +167,10 @@ Honest scope for the current proof of concept:
 - **`llm_judge` needs a judge provider.** The default is the offline `mock`
   provider (deterministic; pin responses for exact verdicts). Real judges need
   a configured provider key.
-- **Secrets are encrypted at rest** but workflows cannot yet reference them from
-  steps; provider keys are environment variables. Wiring stored secrets into LLM
-  steps is on the roadmap.
+- **Secrets are encrypted at rest** (Fernet) and LLM steps can reference them
+  with `credential_ref: <secret-name>` (project-scoped; reveals are audited).
+  Provider keys can also come from environment variables. Secrets never appear
+  in traces, exports, or outbox payloads (redacted).
 
 ## Quality checks
 
