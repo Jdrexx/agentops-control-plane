@@ -118,18 +118,19 @@ def test_expiry_is_derived_at_read_time(client: TestClient, project: dict):
 
 
 def test_approver_roles_schema_validation(client: TestClient, project: dict):
-    response = client.post(
-        "/api/workflows",
-        json={
-            "project_id": project["id"],
-            "name": "Bad policy",
-            "steps": [
-                {
-                    "name": "Review",
-                    "tool": "approval",
-                    "config": {"approver_roles": ["admin", "superuser"]},
-                }
-            ],
-        },
-    )
-    assert response.status_code == 422
+    for bad_roles in (["admin", "superuser"], ["viewer"], ["viewer", "operator"]):
+        response = client.post(
+            "/api/workflows",
+            json={
+                "project_id": project["id"],
+                "name": "Bad policy",
+                "steps": [
+                    {
+                        "name": "Review",
+                        "tool": "approval",
+                        "config": {"approver_roles": bad_roles},
+                    }
+                ],
+            },
+        )
+        assert response.status_code == 422, bad_roles
