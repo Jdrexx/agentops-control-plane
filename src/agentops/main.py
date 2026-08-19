@@ -340,7 +340,9 @@ def create_app(database_path: str | None = None) -> FastAPI:
         if idempotency_key is not None:
             if len(idempotency_key) > 128 or not re.fullmatch(r"[A-Za-z0-9._-]+", idempotency_key):
                 raise HTTPException(422, "invalid Idempotency-Key")
-            existing = service(request).find_run_by_idempotency_key(idempotency_key)
+            existing = service(request).find_run_by_idempotency_key(
+                idempotency_key, workflow_id
+            )
             if existing is not None:
                 return JSONResponse(existing, status_code=200)
         return service(request).start_run(
@@ -651,7 +653,7 @@ def create_app(database_path: str | None = None) -> FastAPI:
         limit: int = Query(default=100, ge=1, le=500),
     ):
         return service(request).list_agent_events(
-            limit, project_ids=actor_project_ids(request), cursor=cursor
+            limit, project_ids=actor_project_ids(request), cursor=cursor, ascending=False
         )
 
     return app

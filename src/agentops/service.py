@@ -231,11 +231,11 @@ class AgentOpsService:
         actor_role: str = "admin",
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
+        workflow = self.get_workflow(workflow_id)
         if idempotency_key:
-            existing = self.find_run_by_idempotency_key(idempotency_key)
+            existing = self.find_run_by_idempotency_key(idempotency_key, workflow_id)
             if existing is not None:
                 return existing
-        workflow = self.get_workflow(workflow_id)
         if parent_run_id is not None:
             parent = self.get_run(parent_run_id, redact_sensitive=False)
             parent_workflow = self.get_workflow(parent["workflow_id"])
@@ -264,7 +264,7 @@ class AgentOpsService:
             # A concurrent request raced the same idempotency key; return the
             # run the winner created.
             if idempotency_key:
-                existing = self.find_run_by_idempotency_key(idempotency_key)
+                existing = self.find_run_by_idempotency_key(idempotency_key, workflow_id)
                 if existing is not None:
                     return existing
             raise
@@ -274,10 +274,14 @@ class AgentOpsService:
             self._execute(run_id)
         return self.get_run(run_id)
 
-    def find_run_by_idempotency_key(self, idempotency_key: str) -> dict[str, Any] | None:
+    def find_run_by_idempotency_key(
+        self, idempotency_key: str, workflow_id: int
+    ) -> dict[str, Any] | None:
+        """Look up a run by key, scoped to the workflow the caller authorized."""
         with self.db.connect() as connection:
             row = connection.execute(
-                "SELECT id FROM runs WHERE idempotency_key=?", (idempotency_key,)
+                "SELECT id FROM runs WHERE idempotency_key=? AND workflow_id=?",
+                (idempotency_key, workflow_id),
             ).fetchone()
         if row is None:
             return None
@@ -645,7 +649,14 @@ class AgentOpsService:
         limit: int = 100,
         project_ids: set[int] | None = None,
         cursor: int | None = None,
+        ascending: bool = True,
     ) -> list[dict[str, Any]]:
+        """List agent events.
+
+        Defaults to ascending (chronological) order for the live dashboard
+        feed; REST callers pass ``ascending=False`` for newest-first cursor
+        pagination.
+        """
         query = """SELECT ae.* FROM agent_events ae
                   JOIN runs r ON r.id=ae.run_id
                   JOIN workflows w ON w.id=r.workflow_id"""
@@ -666,6 +677,8 @@ class AgentOpsService:
         params.append(limit)
         with self.db.connect() as connection:
             rows = connection.execute(query, params).fetchall()
+        if ascending:
+            rows = list(reversed(rows))
         events = []
         for row in rows:
             event = dict(row)
@@ -1928,7 +1941,7 @@ ACTUAL: {encode(actual)}""",
         if cursor is not None:
             query += " WHERE id < ?"
             params.append(cursor)
-        query += " ORDER BY created_at DESC LIMIT ?"
+        query += " ORDER BY id DESC LIMIT ?"
         params.append(limit)
         with self.db.connect() as connection:
             rows = connection.execute(query, params).fetchall()

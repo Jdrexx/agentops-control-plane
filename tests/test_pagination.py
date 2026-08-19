@@ -39,6 +39,34 @@ def test_idempotency_key_is_validated(client: TestClient, project: dict):
     assert response.status_code == 422
 
 
+def test_idempotency_key_is_scoped_per_workflow(client: TestClient, project: dict):
+    first = client.post(
+        "/api/workflows",
+        json={
+            "project_id": project["id"],
+            "name": "Scoped A",
+            "steps": [{"name": "Pass", "tool": "input"}],
+        },
+    ).json()
+    second = client.post(
+        "/api/workflows",
+        json={
+            "project_id": project["id"],
+            "name": "Scoped B",
+            "steps": [{"name": "Pass", "tool": "input"}],
+        },
+    ).json()
+    run_a = _run_workflow(client, first["id"], "x", "shared-key")
+    run_b = _run_workflow(client, second["id"], "x", "shared-key")
+    assert run_a.status_code == 201
+    assert run_b.status_code == 201
+    assert run_a.json()["id"] != run_b.json()["id"]
+    # Replay within the same workflow still deduplicates.
+    replay = _run_workflow(client, first["id"], "x", "shared-key")
+    assert replay.status_code == 200
+    assert replay.json()["id"] == run_a.json()["id"]
+
+
 def test_run_filters_by_status_project_and_parent(client: TestClient, project: dict):
     good = client.post(
         "/api/workflows",
