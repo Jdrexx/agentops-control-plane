@@ -60,6 +60,9 @@ def test_llm_step_uses_project_secret_as_api_key(vaulted_client: TestClient):
     # The secret value must never leak into the run or its spans.
     assert "sk-secret-value" not in str(run)
     assert "sk-secret-value" not in client.get(f"/api/runs/{run['id']}").text
+    # Workflow-time secret use is audited like any API reveal.
+    audit = client.get("/api/audit").json()
+    assert any(item["action"] == "secret.reveal" for item in audit)
 
 
 def test_credential_ref_missing_fails_clearly(vaulted_client: TestClient):
@@ -106,18 +109,19 @@ def test_secret_reveal_is_posted_and_audited(vaulted_client: TestClient, monkeyp
 def test_credential_ref_rejects_invalid_values(vaulted_client: TestClient):
     client = vaulted_client
     project = client.post("/api/projects", json={"name": "Bad ref"}).json()
-    response = client.post(
-        "/api/workflows",
-        json={
-            "project_id": project["id"],
-            "name": "Bad ref workflow",
-            "steps": [
-                {
-                    "name": "Generate",
-                    "tool": "llm",
-                    "config": {"provider": "openai", "credential_ref": "x" * 300},
-                }
-            ],
-        },
-    )
-    assert response.status_code == 422
+    for bad_ref in ("x" * 300, "x" * 150):  # over the secret-name limit of 100
+        response = client.post(
+            "/api/workflows",
+            json={
+                "project_id": project["id"],
+                "name": "Bad ref workflow",
+                "steps": [
+                    {
+                        "name": "Generate",
+                        "tool": "llm",
+                        "config": {"provider": "openai", "credential_ref": bad_ref},
+                    }
+                ],
+            },
+        )
+        assert response.status_code == 422, len(bad_ref)
