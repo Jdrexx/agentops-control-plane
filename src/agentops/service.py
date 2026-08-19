@@ -229,34 +229,59 @@ class AgentOpsService:
         queued: bool = False,
         max_steps: int = 100,
         actor_role: str = "admin",
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
+        if idempotency_key:
+            existing = self.find_run_by_idempotency_key(idempotency_key)
+            if existing is not None:
+                return existing
         workflow = self.get_workflow(workflow_id)
         if parent_run_id is not None:
             parent = self.get_run(parent_run_id, redact_sensitive=False)
             parent_workflow = self.get_workflow(parent["workflow_id"])
             if parent_workflow["project_id"] != workflow["project_id"]:
                 raise ConflictError("parent and child runs must belong to the same project")
-        with self.db.connect() as connection:
-            cursor = connection.execute(
-                """INSERT INTO runs(
-                       workflow_id, parent_run_id, status, input, max_steps, actor_role, started_at
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    workflow_id,
-                    parent_run_id,
-                    "queued" if queued else "running",
-                    encode(payload),
-                    max_steps,
-                    actor_role,
-                    now(),
-                ),
-            )
-            run_id = int(cursor.lastrowid)
+        try:
+            with self.db.connect() as connection:
+                cursor = connection.execute(
+                    """INSERT INTO runs(
+                           workflow_id, parent_run_id, status, input, max_steps,
+                           actor_role, idempotency_key, started_at
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        workflow_id,
+                        parent_run_id,
+                        "queued" if queued else "running",
+                        encode(payload),
+                        max_steps,
+                        actor_role,
+                        idempotency_key,
+                        now(),
+                    ),
+                )
+                run_id = int(cursor.lastrowid)
+        except (sqlite3.IntegrityError, psycopg.IntegrityError):
+            # A concurrent request raced the same idempotency key; return the
+            # run the winner created.
+            if idempotency_key:
+                existing = self.find_run_by_idempotency_key(idempotency_key)
+                if existing is not None:
+                    return existing
+            raise
         if queued:
             self.run_queue.submit(run_id)
         else:
             self._execute(run_id)
         return self.get_run(run_id)
+
+    def find_run_by_idempotency_key(self, idempotency_key: str) -> dict[str, Any] | None:
+        with self.db.connect() as connection:
+            row = connection.execute(
+                "SELECT id FROM runs WHERE idempotency_key=?", (idempotency_key,)
+            ).fetchone()
+        if row is None:
+            return None
+        return self.get_run(int(row["id"]))
 
     def _execute(self, run_id: int) -> None:
         run = self.get_run(run_id, redact_sensitive=False)
@@ -616,24 +641,33 @@ class AgentOpsService:
         }
 
     def list_agent_events(
-        self, limit: int = 100, project_ids: set[int] | None = None
+        self,
+        limit: int = 100,
+        project_ids: set[int] | None = None,
+        cursor: int | None = None,
     ) -> list[dict[str, Any]]:
         query = """SELECT ae.* FROM agent_events ae
-                   JOIN runs r ON r.id=ae.run_id
-                   JOIN workflows w ON w.id=r.workflow_id"""
+                  JOIN runs r ON r.id=ae.run_id
+                  JOIN workflows w ON w.id=r.workflow_id"""
+        conditions: list[str] = []
         params: list[Any] = []
+        if cursor is not None:
+            conditions.append("ae.id < ?")
+            params.append(cursor)
         if project_ids is not None:
             if not project_ids:
                 return []
             placeholders = ",".join("?" for _ in project_ids)
-            query += f" WHERE w.project_id IN ({placeholders})"
+            conditions.append(f"w.project_id IN ({placeholders})")
             params.extend(sorted(project_ids))
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
         query += " ORDER BY ae.id DESC LIMIT ?"
         params.append(limit)
         with self.db.connect() as connection:
             rows = connection.execute(query, params).fetchall()
         events = []
-        for row in reversed(rows):
+        for row in rows:
             event = dict(row)
             event["payload"] = redact(decode(event["payload"]))
             events.append(event)
@@ -795,6 +829,9 @@ class AgentOpsService:
         workflow_id: int | None = None,
         limit: int = 100,
         project_ids: set[int] | None = None,
+        status: str | None = None,
+        project_id: int | None = None,
+        has_parent: bool | None = None,
     ) -> list[dict[str, Any]]:
         query = "SELECT r.* FROM runs r JOIN workflows w ON w.id=r.workflow_id"
         conditions: list[str] = []
@@ -802,6 +839,15 @@ class AgentOpsService:
         if workflow_id is not None:
             conditions.append("r.workflow_id=?")
             params.append(workflow_id)
+        if project_id is not None:
+            conditions.append("w.project_id=?")
+            params.append(project_id)
+        if status is not None:
+            conditions.append("r.status=?")
+            params.append(status)
+        if has_parent is not None:
+            condition = "r.parent_run_id IS NOT NULL" if has_parent else "r.parent_run_id IS NULL"
+            conditions.append(condition)
         if project_ids is not None:
             if not project_ids:
                 return []
@@ -1851,7 +1897,11 @@ ACTUAL: {encode(actual)}""",
         return self.vault.decrypt(row["ciphertext"])
 
     def reveal_secret_named(self, project_id: int, name: str) -> str:
-        """Decrypt a project secret by name — the LLM-step ``credential_ref`` path."""
+        """Decrypt a project secret by name — the LLM-step ``credential_ref`` path.
+
+        Audited so workflow-time secret use appears in the audit trail, not just
+        interactive API reveals.
+        """
         with self.db.connect() as connection:
             row = connection.execute(
                 "SELECT id FROM secrets WHERE project_id=? AND name=?", (project_id, name)
@@ -1870,11 +1920,18 @@ ACTUAL: {encode(actual)}""",
                 (actor, action, resource, status_code, now()),
             )
 
-    def list_audit_events(self, limit: int = 200) -> list[dict[str, Any]]:
+    def list_audit_events(
+        self, limit: int = 200, cursor: int | None = None
+    ) -> list[dict[str, Any]]:
+        query = "SELECT * FROM audit_events"
+        params: list[Any] = []
+        if cursor is not None:
+            query += " WHERE id < ?"
+            params.append(cursor)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
         with self.db.connect() as connection:
-            rows = connection.execute(
-                "SELECT * FROM audit_events ORDER BY created_at DESC LIMIT ?", (limit,)
-            ).fetchall()
+            rows = connection.execute(query, params).fetchall()
         return [dict(row) for row in rows]
 
     def create_alert(self, name: str, metric: str, threshold: float) -> dict[str, Any]:
