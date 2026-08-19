@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS runs (
   current_step INTEGER NOT NULL DEFAULT 0,
   max_steps INTEGER NOT NULL DEFAULT 100,
   actor_role TEXT NOT NULL DEFAULT 'admin',
+  idempotency_key TEXT,
   started_at TEXT NOT NULL,
   finished_at TEXT
 );

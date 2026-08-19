@@ -70,6 +70,7 @@
     </section>
   </main>
   <dialog id="json-dialog" aria-labelledby="dialog-title"><form method="dialog"><div class="panel-title"><h2 id="dialog-title">Details</h2><button class="ghost">Close</button></div><pre id="dialog-json"></pre></form></dialog>
+  <dialog id="compare-dialog" aria-labelledby="compare-title"><div class="panel-title"><h2 id="compare-title">Compare with…</h2><button class="ghost" id="compare-cancel">Close</button></div><label>Recent run<select id="compare-select"></select></label><button id="compare-confirm">Compare</button></dialog>
   <dialog id="login-dialog" class="login-dialog" aria-labelledby="login-title"><form id="login-form"><p class="eyebrow">SECURE ACCESS</p><h2 id="login-title">Sign in to AgentOps</h2><p>Enter the operator token configured for this environment. It remains in this browser tab only.</p><input name="username" value="agentops" autocomplete="username" hidden><label>Access token<input id="login-token" name="access-token" type="password" autocomplete="one-time-code" required></label><p id="login-error" class="error" role="alert"></p><button type="submit">Sign in</button></form></dialog>
   <div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
   <script src="/static/app.js"></script>

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
@@ -104,6 +105,7 @@ def create_app(database_path: str | None = None) -> FastAPI:
                     "/api/users",
                     "/api/secrets",
                     "/api/audit",
+                    "/api/events",
                     "/api/project-members",
                     "/api/webhooks",
                     "/api/outbox",
@@ -334,6 +336,13 @@ def create_app(database_path: str | None = None) -> FastAPI:
     @app.post("/api/workflows/{workflow_id}/runs", status_code=201)
     def start_run(workflow_id: int, body: RunCreate, request: Request):
         require_workflow_access(request, workflow_id, write=True)
+        idempotency_key = request.headers.get("Idempotency-Key")
+        if idempotency_key is not None:
+            if len(idempotency_key) > 128 or not re.fullmatch(r"[A-Za-z0-9._-]+", idempotency_key):
+                raise HTTPException(422, "invalid Idempotency-Key")
+            existing = service(request).find_run_by_idempotency_key(idempotency_key)
+            if existing is not None:
+                return JSONResponse(existing, status_code=200)
         return service(request).start_run(
             workflow_id,
             body.input,
@@ -341,18 +350,29 @@ def create_app(database_path: str | None = None) -> FastAPI:
             queued=body.execution == "queued",
             max_steps=body.max_steps,
             actor_role=request.state.actor.role,
+            idempotency_key=idempotency_key,
         )
 
     @app.get("/api/runs")
     def runs(
         request: Request,
         workflow_id: int | None = None,
+        status: str | None = None,
+        project_id: int | None = None,
+        has_parent: bool | None = None,
         limit: int = Query(default=100, ge=1, le=500),
     ):
         if workflow_id is not None:
             require_workflow_access(request, workflow_id)
+        if project_id is not None:
+            require_project_access(request, project_id)
         return service(request).list_runs(
-            workflow_id, limit, project_ids=actor_project_ids(request)
+            workflow_id,
+            limit,
+            project_ids=actor_project_ids(request),
+            status=status,
+            project_id=project_id,
+            has_parent=has_parent,
         )
 
     @app.get("/api/runs/{run_id}")
@@ -617,8 +637,22 @@ def create_app(database_path: str | None = None) -> FastAPI:
         return {"value": service(request).reveal_secret(secret_id)}
 
     @app.get("/api/audit")
-    def audit_events(request: Request, limit: int = Query(default=200, ge=1, le=1000)):
-        return service(request).list_audit_events(limit)
+    def audit_events(
+        request: Request,
+        cursor: int | None = None,
+        limit: int = Query(default=200, ge=1, le=1000),
+    ):
+        return service(request).list_audit_events(limit, cursor=cursor)
+
+    @app.get("/api/events")
+    def agent_events(
+        request: Request,
+        cursor: int | None = None,
+        limit: int = Query(default=100, ge=1, le=500),
+    ):
+        return service(request).list_agent_events(
+            limit, project_ids=actor_project_ids(request), cursor=cursor
+        )
 
     return app
 

@@ -138,6 +138,16 @@ def _m_0007_outbox_claims(connection: Any, dialect: str) -> None:
         connection.execute("ALTER TABLE outbox_events ADD COLUMN claimed_at TEXT")
 
 
+def _m_0008_run_idempotency(connection: Any, dialect: str) -> None:
+    columns = _table_columns(connection, "runs", dialect)
+    if "idempotency_key" not in columns:
+        connection.execute("ALTER TABLE runs ADD COLUMN idempotency_key TEXT")
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_runs_idem "
+        "ON runs(idempotency_key) WHERE idempotency_key IS NOT NULL"
+    )
+
+
 MIGRATIONS: list[Migration] = [
     ("0001_initial", _m_0001_initial),
     ("0002_approval_expiry", _m_0002_approval_expiry),
@@ -146,6 +156,7 @@ MIGRATIONS: list[Migration] = [
     ("0005_evaluation_progress", _m_0005_evaluation_progress),
     ("0006_outbox", _m_0006_outbox),
     ("0007_outbox_claims", _m_0007_outbox_claims),
+    ("0008_run_idempotency", _m_0008_run_idempotency),
 ]
 
 
