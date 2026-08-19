@@ -82,6 +82,15 @@ class Step(BaseModel):
         if self.tool == "llm":
             number("input_cost_per_1k", 0)
             number("output_cost_per_1k", 0)
+            credential_ref = self.config.get("credential_ref")
+            if credential_ref is not None and (
+                not isinstance(credential_ref, str)
+                or not credential_ref.strip()
+                or len(credential_ref) > 200
+            ):
+                raise ValueError(
+                    "config.credential_ref must be a non-empty string up to 200 characters"
+                )
         return self
 
 
