@@ -142,9 +142,11 @@ def _m_0008_run_idempotency(connection: Any, dialect: str) -> None:
     columns = _table_columns(connection, "runs", dialect)
     if "idempotency_key" not in columns:
         connection.execute("ALTER TABLE runs ADD COLUMN idempotency_key TEXT")
+    # Unique per workflow so concurrent same-key requests can only create one
+    # run, while the same key may be reused across different workflows.
     connection.execute(
-        "CREATE INDEX IF NOT EXISTS idx_runs_idem "
-        "ON runs(idempotency_key) WHERE idempotency_key IS NOT NULL"
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_idem "
+        "ON runs(workflow_id, idempotency_key) WHERE idempotency_key IS NOT NULL"
     )
 
 
