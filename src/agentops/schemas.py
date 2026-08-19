@@ -79,12 +79,12 @@ class Step(BaseModel):
                 not isinstance(approver_roles, list)
                 or not approver_roles
                 or any(
-                    not isinstance(role, str) or role not in {"admin", "operator", "viewer"}
+                    not isinstance(role, str) or role not in {"admin", "operator"}
                     for role in approver_roles
                 )
             ):
                 raise ValueError(
-                    "config.approver_roles must be a non-empty list of valid roles"
+                    "config.approver_roles must be a non-empty list of admin/operator"
                 )
         if self.tool == "handoff":
             if "workflow_id" not in self.config:

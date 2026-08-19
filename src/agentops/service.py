@@ -914,11 +914,14 @@ class AgentOpsService:
                 approval["expires_at"] is not None
                 and approval["expires_at"] <= now()
             ):
-                # Materialize the derived state at the moment it matters.
-                connection.execute(
-                    "UPDATE approvals SET status='expired' WHERE id=? AND status='pending'",
-                    (approval_id,),
-                )
+                # Materialize the derived state in its own committed
+                # transaction before raising, so the record reflects reality.
+                with self.db.connect() as connection:
+                    connection.execute(
+                        "UPDATE approvals SET status='expired' "
+                        "WHERE id=? AND status='pending'",
+                        (approval_id,),
+                    )
                 raise ConflictError("approval has expired")
             policy = decode(approval["policy"]) if approval["policy"] else {}
             approver_roles = policy.get("approver_roles") or ["admin", "operator"]
@@ -1018,7 +1021,9 @@ class AgentOpsService:
 
         Expiry is computed in the query (a pending approval past its
         ``expires_at`` reads as ``expired``) so correctness never depends on
-        the scheduler sweep having run.
+        the scheduler sweep having run. The status filter repeats the CASE
+        expression because neither SQLite nor PostgreSQL allows WHERE on a
+        SELECT alias.
         """
         query = """SELECT a.*,
                           CASE WHEN a.status='pending'
@@ -1030,8 +1035,12 @@ class AgentOpsService:
         conditions: list[str] = []
         params: list[Any] = [now()]
         if status is not None:
-            conditions.append("effective_status=?")
-            params.append(status)
+            conditions.append(
+                """CASE WHEN a.status='pending'
+                      AND a.expires_at IS NOT NULL AND a.expires_at <= ?
+                     THEN 'expired' ELSE a.status END = ?"""
+            )
+            params.extend([now(), status])
         if project_ids is not None:
             if not project_ids:
                 return []
