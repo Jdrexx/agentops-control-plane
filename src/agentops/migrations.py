@@ -150,6 +150,14 @@ def _m_0008_run_idempotency(connection: Any, dialect: str) -> None:
     )
 
 
+def _m_0009_approval_governance(connection: Any, dialect: str) -> None:
+    columns = _table_columns(connection, "approvals", dialect)
+    if "decided_by" not in columns:
+        connection.execute("ALTER TABLE approvals ADD COLUMN decided_by TEXT")
+    if "policy" not in columns:
+        connection.execute("ALTER TABLE approvals ADD COLUMN policy TEXT")
+
+
 MIGRATIONS: list[Migration] = [
     ("0001_initial", _m_0001_initial),
     ("0002_approval_expiry", _m_0002_approval_expiry),
@@ -159,6 +167,7 @@ MIGRATIONS: list[Migration] = [
     ("0006_outbox", _m_0006_outbox),
     ("0007_outbox_claims", _m_0007_outbox_claims),
     ("0008_run_idempotency", _m_0008_run_idempotency),
+    ("0009_approval_governance", _m_0009_approval_governance),
 ]
 
 
