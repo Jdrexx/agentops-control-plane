@@ -42,6 +42,11 @@ def now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _lease_cutoff() -> str:
+    """ISO timestamp marking when an outbox claim lease expires (5 minutes)."""
+    return (datetime.now(UTC) - timedelta(seconds=300)).isoformat()
+
+
 def encode(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
@@ -1465,14 +1470,34 @@ ACTUAL: {encode(actual)}""",
                     self._deliver_outbox(row["id"])
 
     def _due_outbox(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Pending rows that are due, plus claimed rows whose lease expired."""
         with self.db.connect() as connection:
             rows = connection.execute(
                 """SELECT id FROM outbox_events
-                   WHERE status='pending' AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+                   WHERE (status='pending'
+                          AND (next_attempt_at IS NULL OR next_attempt_at <= ?))
+                      OR (status='claimed'
+                          AND claimed_at IS NOT NULL AND claimed_at <= ?)
                    ORDER BY id LIMIT ?""",
-                (now(), limit),
+                (now(), _lease_cutoff(), limit),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def _claim_outbox(self, outbox_id: int) -> bool:
+        """Atomically claim a pending (or lease-expired) outbox row.
+
+        Returns False if another worker already holds the claim, so
+        concurrent ``worker`` replicas never deliver the same row twice.
+        """
+        with self.db.connect() as connection:
+            cursor = connection.execute(
+                """UPDATE outbox_events SET status='claimed', claimed_at=?
+                   WHERE id=?
+                     AND (status='pending'
+                          OR (status='claimed' AND claimed_at IS NOT NULL AND claimed_at <= ?))""",
+                (now(), outbox_id, _lease_cutoff()),
+            )
+            return cursor.rowcount == 1
 
     def _enqueue_outbox(
         self, event: str, destination: str, payload: dict[str, Any], idempotency_key: str
@@ -1501,13 +1526,16 @@ ACTUAL: {encode(actual)}""",
             row = connection.execute(
                 "SELECT * FROM outbox_events WHERE id=?", (outbox_id,)
             ).fetchone()
-        if row is None or row["status"] != "pending":
+        if row is None or row["status"] not in {"pending", "claimed"}:
             return
+        if not self._claim_outbox(outbox_id):
+            return  # Another worker holds the claim.
         payload = decode(row["payload"])
         event = row["event"]
         status = "delivered"
         error = None
         webhook_id: int | None = None
+        recorded = False
         try:
             if row["destination"] == "slack":
                 self.notifier._slack(os.environ["AGENTOPS_SLACK_WEBHOOK_URL"], event, payload)
@@ -1520,10 +1548,16 @@ ACTUAL: {encode(actual)}""",
                     status = "dead"
                 else:
                     self._send_webhook(webhook["url"], payload, delivery_id=outbox_id)
+                recorded = True
+        except NotFoundError:
+            # The webhook (or its project) was deleted; retrying is pointless and
+            # the delivery history row would violate the FK.
+            status = "dead"
+            error = "webhook destination no longer exists"
         except Exception as caught:
             status = "failed"
             error = str(caught)
-        if webhook_id is not None:
+        if recorded:
             with self.db.connect() as connection:
                 connection.execute(
                     """INSERT INTO webhook_deliveries(
@@ -1539,17 +1573,20 @@ ACTUAL: {encode(actual)}""",
                     ),
                 )
         attempts = row["attempts"] + 1
-        if status == "delivered" or attempts >= 6:
+        if status == "delivered" or status == "dead" or attempts >= 6:
+            # Attempt exhaustion with a failing destination dead-letters the row.
+            final_status = status if status in {"delivered", "dead"} else "dead"
             with self.db.connect() as connection:
                 connection.execute(
                     "UPDATE outbox_events SET status=?,attempts=?,last_error=? WHERE id=?",
-                    ("delivered" if status == "delivered" else "dead", attempts, error, outbox_id),
+                    (final_status, attempts, error, outbox_id),
                 )
             return
         delay = (2, 8, 30, 120, 600)[min(attempts - 1, 4)]
         with self.db.connect() as connection:
             connection.execute(
-                "UPDATE outbox_events SET attempts=?,last_error=?,next_attempt_at=? WHERE id=?",
+                """UPDATE outbox_events SET status='pending', claimed_at=NULL,
+                       attempts=?,last_error=?,next_attempt_at=? WHERE id=?""",
                 (
                     attempts,
                     error,

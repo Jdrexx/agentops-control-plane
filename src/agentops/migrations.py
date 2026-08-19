@@ -132,6 +132,12 @@ def _m_0006_outbox(connection: Any, dialect: str) -> None:
     )
 
 
+def _m_0007_outbox_claims(connection: Any, dialect: str) -> None:
+    columns = _table_columns(connection, "outbox_events", dialect)
+    if "claimed_at" not in columns:
+        connection.execute("ALTER TABLE outbox_events ADD COLUMN claimed_at TEXT")
+
+
 MIGRATIONS: list[Migration] = [
     ("0001_initial", _m_0001_initial),
     ("0002_approval_expiry", _m_0002_approval_expiry),
@@ -139,6 +145,7 @@ MIGRATIONS: list[Migration] = [
     ("0004_run_controls", _m_0004_run_controls),
     ("0005_evaluation_progress", _m_0005_evaluation_progress),
     ("0006_outbox", _m_0006_outbox),
+    ("0007_outbox_claims", _m_0007_outbox_claims),
 ]
 
 
