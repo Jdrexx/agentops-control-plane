@@ -175,3 +175,50 @@ def test_stream_retries_and_clears_partial_chunks(monkeypatch):
     assert result == "final result"
     assert "".join(chunks) == "final result"
     assert calls["count"] == 2
+
+
+def test_malformed_stream_event_fails_the_call(monkeypatch):
+    class BadStream:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return None
+
+        def __iter__(self):
+            return iter([b'{"response":"partial"}\n', b"this is not json\n"])
+
+    calls = {"count": 0}
+
+    def fake_urlopen(request, timeout=60):
+        calls["count"] += 1
+        return BadStream()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    with pytest.raises(ProviderError, match="malformed JSON"):
+        ProviderRegistry().generate("ollama", "llama-test", "hello", on_chunk=lambda _: None)
+    assert calls["count"] == 1  # never retried
+
+
+def test_stream_failure_after_chunks_does_not_retry(monkeypatch):
+    class FlakyStream:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return None
+
+        def __iter__(self):
+            yield b'{"response":"first "}\n'
+            raise TimeoutError("connection dropped mid-stream")
+
+    calls = {"count": 0}
+
+    def fake_urlopen(request, timeout=60):
+        calls["count"] += 1
+        return FlakyStream()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    with pytest.raises(ProviderError, match="partial output"):
+        ProviderRegistry().generate("ollama", "llama-test", "hello", on_chunk=lambda _: None)
+    assert calls["count"] == 1  # chunks were published; retrying would duplicate them
