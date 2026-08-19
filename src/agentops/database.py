@@ -184,6 +184,7 @@ CREATE TABLE IF NOT EXISTS outbox_events (
   status TEXT NOT NULL DEFAULT 'pending',
   attempts INTEGER NOT NULL DEFAULT 0,
   next_attempt_at TEXT,
+  claimed_at TEXT,
   last_error TEXT,
   idempotency_key TEXT NOT NULL UNIQUE,
   created_at TEXT NOT NULL
@@ -248,7 +249,8 @@ class PostgresConnection:
         if returns_id and "RETURNING" not in translated.upper():
             translated = f"{translated.rstrip()} RETURNING id"
         cursor = self.connection.execute(translated, params)
-        lastrowid = cursor.fetchone()[0] if returns_id else None
+        row = cursor.fetchone() if returns_id else None
+        lastrowid = row[0] if row is not None else None
         return PostgresCursor(cursor, lastrowid)
 
     def executescript(self, script: str) -> None:

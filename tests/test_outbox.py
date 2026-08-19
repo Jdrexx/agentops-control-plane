@@ -175,6 +175,95 @@ def test_slack_and_email_notifications_use_outbox(client: TestClient, project: d
     assert email_calls == ["run.completed"]
 
 
+def test_outbox_claim_prevents_double_delivery(client: TestClient, project: dict):
+    captured = []
+    client.app.state.service._send_webhook = (
+        lambda url, payload, delivery_id=None: captured.append(url)
+    )
+    _create_webhook(client, project["id"], "https://8.8.8.8/hook")
+    workflow = client.post(
+        "/api/workflows",
+        json={
+            "project_id": project["id"],
+            "name": "Claim",
+            "steps": [{"name": "Pass", "tool": "input"}],
+        },
+    ).json()
+    client.post(f"/api/workflows/{workflow['id']}/runs", json={"input": "x"})
+    row = _pending_outbox(client)[0]
+    service = client.app.state.service
+
+    # Simulate a second worker that claimed the row a moment ago.
+    with service.db.connect() as connection:
+        connection.execute(
+            "UPDATE outbox_events SET status='claimed', claimed_at=? WHERE id=?",
+            ("2099-01-01T00:00:00+00:00", row["id"]),
+        )
+    service._deliver_outbox(row["id"])
+    assert captured == [], "a row claimed by another worker was delivered"
+
+    # The claiming worker finishes and marks it delivered.
+    with service.db.connect() as connection:
+        connection.execute(
+            "UPDATE outbox_events SET status='delivered', claimed_at=NULL WHERE id=?",
+            (row["id"],),
+        )
+    assert client.get("/api/outbox?status=delivered").json()[0]["id"] == row["id"]
+
+
+def test_outbox_reclaims_expired_leases(client: TestClient, project: dict):
+    captured = []
+    client.app.state.service._send_webhook = (
+        lambda url, payload, delivery_id=None: captured.append(url)
+    )
+    _create_webhook(client, project["id"], "https://8.8.8.8/hook")
+    workflow = client.post(
+        "/api/workflows",
+        json={
+            "project_id": project["id"],
+            "name": "Lease",
+            "steps": [{"name": "Pass", "tool": "input"}],
+        },
+    ).json()
+    client.post(f"/api/workflows/{workflow['id']}/runs", json={"input": "x"})
+    row = _pending_outbox(client)[0]
+    service = client.app.state.service
+
+    # A crashed worker left the row claimed past its lease; the next worker reclaims.
+    with service.db.connect() as connection:
+        connection.execute(
+            "UPDATE outbox_events SET status='claimed', claimed_at=? WHERE id=?",
+            ("2000-01-01T00:00:00+00:00", row["id"]),
+        )
+    service._deliver_outbox(row["id"])
+    assert captured == ["https://8.8.8.8/hook"]
+    assert client.get("/api/outbox?status=delivered").json()[0]["id"] == row["id"]
+
+
+def test_deleted_webhook_dead_letters_immediately(client: TestClient, project: dict):
+    webhook = _create_webhook(client, project["id"], "https://8.8.8.8/hook")
+    workflow = client.post(
+        "/api/workflows",
+        json={
+            "project_id": project["id"],
+            "name": "Orphan",
+            "steps": [{"name": "Pass", "tool": "input"}],
+        },
+    ).json()
+    client.post(f"/api/workflows/{workflow['id']}/runs", json={"input": "x"})
+    row = _pending_outbox(client)[0]
+
+    # Deleting the project cascades the webhook away while the row is queued.
+    assert client.delete(f"/api/projects/{project['id']}").status_code == 200
+    assert client.get(f"/api/webhooks/{webhook['id']}").status_code == 404
+
+    client.app.state.service._deliver_outbox(row["id"])
+    dead = client.get("/api/outbox?status=dead").json()
+    assert any(item["id"] == row["id"] for item in dead)
+    assert dead[0]["attempts"] == 1
+    assert "no longer exists" in dead[0]["last_error"]
+
+
 def test_outbox_endpoint_lists_with_status_filter(client: TestClient, project: dict):
     _create_webhook(client, project["id"], "https://8.8.8.8/hook")
     workflow = client.post(
