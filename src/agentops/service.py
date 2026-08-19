@@ -1858,7 +1858,9 @@ ACTUAL: {encode(actual)}""",
             ).fetchone()
         if row is None:
             raise ValueError(f"credential_ref '{name}' not found in this project")
-        return self.reveal_secret(int(row["id"]))
+        value = self.reveal_secret(int(row["id"]))
+        self.audit("run", "secret.reveal", f"secrets/{project_id}/{name}", 200)
+        return value
 
     def audit(self, actor: str, action: str, resource: str, status_code: int) -> None:
         with self.db.connect() as connection:

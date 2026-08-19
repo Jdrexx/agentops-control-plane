@@ -86,10 +86,10 @@ class Step(BaseModel):
             if credential_ref is not None and (
                 not isinstance(credential_ref, str)
                 or not credential_ref.strip()
-                or len(credential_ref) > 200
+                or len(credential_ref) > 100
             ):
                 raise ValueError(
-                    "config.credential_ref must be a non-empty string up to 200 characters"
+                    "config.credential_ref must be a non-empty string up to 100 characters"
                 )
         return self
 
