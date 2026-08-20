@@ -79,7 +79,8 @@ Each scenario is idempotent (seeding again returns the existing demo); tick
 **reset demo data** to delete and rebuild it. The demo uses SQLite, keeps its
 data in the local `agentops-data` Docker volume, and runs queued work in the
 application process. No PostgreSQL, Redis, cloud account, or model-provider key
-is required.
+is required. Before presenting, run `python scripts/demo_smoke.py` against the
+Compose service and follow the [five-minute video runbook](docs/VIDEO_DEMO.md).
 
 ## Local development
 
