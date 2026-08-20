@@ -11,7 +11,7 @@ notifications, then run:
 
 ```bash
 docker compose up -d --build agentops
-python scripts/demo_smoke.py
+python3 scripts/demo_smoke.py
 ```
 
 The smoke command must end with `Demo smoke passed`. If it does not, stop and
@@ -81,7 +81,7 @@ scheduling, real OTLP/protobuf export, or client-side encrypted backups.
 - If the browser loses the live stream, refresh and reopen the selected run;
   the persisted trace remains available.
 - If startup or a scenario fails, run `docker compose logs --tail=200 agentops`
-  and do not record until `python scripts/demo_smoke.py` passes.
+  and do not record until `python3 scripts/demo_smoke.py` passes.
 - The unrelated optional Railway backup deployment is not part of this local
   demo gate and should not be shown as application health.
 
