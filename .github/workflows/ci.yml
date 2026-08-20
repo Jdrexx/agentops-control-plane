@@ -26,3 +26,9 @@ jobs:
         run: node --check src/agentops/static/app.js
       - name: Build production container
         run: docker build -t agentops-control-plane:ci .
+      - name: Smoke-test Compose demo
+        run: |
+          set -euo pipefail
+          trap 'docker compose logs --no-color agentops; docker compose down -v' EXIT
+          docker compose up -d --build agentops
+          python scripts/demo_smoke.py
