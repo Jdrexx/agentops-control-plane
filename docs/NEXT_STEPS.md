@@ -27,17 +27,17 @@ ongoing cost.
 
 - [x] Capability matrix and Mermaid architecture diagram in the README.
 - [x] Three offline demo scenarios replace the old single seed workflow.
-- [ ] Record a short GIF showing a run, its step trace, replay, and evaluation results.
-- [ ] Keep all example data synthetic and remove API keys, tokens, and local paths.
+- [x] Record a short GIF showing the dashboard demo walkthrough (`docs/demo.gif`).
+- [x] Keep all example data synthetic and remove API keys, tokens, and local paths.
 
 Done when a reviewer can understand the product in under a minute without installing it.
 
 ### 2. Create a five-minute walkthrough
 
-- [ ] Explain the user problem and target operator.
+- [x] Script the user problem and target operator (`docs/VIDEO_DEMO.md`).
 - [x] Run the built-in demo workflow (three scenarios).
-- [ ] Show approval, replay, evaluation, and cost/latency observability.
-- [ ] Close with the architecture boundary and production scaling path.
+- [x] Script approval, evaluation, incident diagnosis, and observability beats.
+- [x] Script the architecture boundary and production scaling path.
 
 Done when the walkthrough is repeatable without a cloud deployment or live paid model
 call.
@@ -45,7 +45,7 @@ call.
 ### 3. Make reviewer setup nearly automatic
 
 - [x] Keep `docker compose up --build agentops` as the canonical command.
-- [ ] Add a smoke check for the Compose-based SQLite configuration.
+- [x] Add a smoke check for the Compose-based SQLite configuration (`scripts/demo_smoke.py`).
 - [ ] Verify setup on a clean machine and record the expected startup time.
 - [x] Keep the seed action idempotent so repeat demonstrations stay tidy.
 
