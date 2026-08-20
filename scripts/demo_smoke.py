@@ -14,14 +14,14 @@ TIMEOUT_SECONDS = 60
 
 def request(path: str, *, method: str = "GET", body: dict | None = None):
     data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(
+    req = urllib.request.Request(  # noqa: S310 - fixed loopback demo endpoint
         f"{BASE_URL}{path}",
         data=data,
         method=method,
         headers={"Content-Type": "application/json"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=10) as response:
+        with urllib.request.urlopen(req, timeout=10) as response:  # noqa: S310
             return json.load(response)
     except urllib.error.HTTPError as error:
         detail = error.read().decode()
