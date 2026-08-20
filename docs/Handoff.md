@@ -10,8 +10,6 @@ dashboard, REST API, scheduler, queue, and deterministic mock LLM provider — t
 entire product is demonstrable offline with zero API keys.
 
 Public repo: https://github.com/Jdrexx/agentops-control-plane
-Local clone: `/home/j-alien/Documents/GitRepositories/agentops-control-plane`
-
 ## Where we are (2026-08-18/19)
 
 A 20-item robustness plan (Triad+ multi-voice analysis, report in
@@ -58,7 +56,8 @@ materialization, viewer-only policies, un-audited workflow-time secret reveals.
 - JS: `node --check src/agentops/static/app.js`.
 - CI: `uv sync --frozen` — **regenerate `uv.lock` whenever `pyproject.toml` changes**
   (jsonschema was added this way; a stale lock fails CI).
-- Demo/GIF capture: mock provider env vars — see README "Demo scenarios".
+- Demo rehearsal and capture: run `python scripts/demo_smoke.py`, then follow
+  `docs/VIDEO_DEMO.md`.
 
 ## Git workflow (protected `main`)
 
