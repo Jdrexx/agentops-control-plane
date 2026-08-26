@@ -10,3 +10,6 @@ htmlcov/
 *.db-wal
 .env
 backups/
+.procoder/state/
+.procoder/index/
+.lycheecache
