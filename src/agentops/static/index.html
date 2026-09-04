@@ -1,78 +1,350 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>AgentOps Control Plane</title>
-  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/styles.css">
-  <link rel="stylesheet" href="/static/metrics.css">
-  <link rel="stylesheet" href="/static/auth.css">
-  <link rel="stylesheet" href="/static/templates.css">
-  <link rel="stylesheet" href="/static/stream.css">
-</head>
-<body>
-  <header>
-    <div class="brand"><span class="mark">A</span><div><strong>AgentOps</strong><small>CONTROL PLANE</small></div></div>
-    <nav><button class="nav active" data-view="operations">Operations</button><button class="nav" data-view="builder">Builder</button><button class="nav" data-view="quality">Quality</button></nav>
-    <div class="session"><span class="health"><i></i><span id="health-label">Checking system</span></span><button class="ghost" id="logout" hidden>Log out</button></div>
-  </header>
-  <main>
-    <section id="operations" class="view active">
-      <div class="hero"><div><p class="eyebrow">LOCAL-FIRST AGENT OPERATIONS</p><h1>Observe every run.<br><em>Control every action.</em></h1><p class="lede">Trace workflows, inspect failures, approve sensitive steps, replay runs, and measure quality without exporting operational data.</p></div><div class="demo-actions"><button id="demo-tour" title="Streamed draft -> human approval -> QA handoff">Support tour</button><button id="demo-quality" title="Dataset eval: v1 fails 2 cases, v2 fixes them">Regression check</button><button id="demo-incident" title="A failing run with retries and a triggered alert">Incident</button><label class="demo-reset"><input type="checkbox" id="demo-reset"> reset demo data</label></div></div>
-      <section class="metrics"><article><span>Total runs</span><b id="total">0</b></article><article><span>Success rate</span><b id="success">0%</b></article><article><span>Failed runs</span><b id="failed">0</b></article><article><span>Awaiting approval</span><b id="pending">0</b></article><article><span>Model tokens</span><b id="tokens">0</b></article><article><span>Estimated cost</span><b id="cost">$0.00</b></article></section>
-      <section class="panel trend-panel"><div class="panel-title"><div><small>PERFORMANCE TREND</small><h2>Latency and cost by run</h2></div></div><div id="trends" class="trend-bars"><span class="empty">Run workflows to build a trend.</span></div></section>
-      <section class="panel stream-panel"><div class="panel-title"><div><small>LIVE PROVIDER STREAM</small><h2>Current model output</h2></div><button class="ghost" id="clear-stream">Clear</button></div><pre id="live-output">Waiting for a streamed LLM run.</pre></section>
-      <section class="grid"><article class="panel"><div class="panel-title"><div><small>EXECUTION FEED</small><h2>Recent workflow runs</h2></div><button class="ghost" id="refresh">Refresh</button></div><div id="runs" class="empty">No runs yet.</div></article><article class="panel"><div class="panel-title"><div><small>HUMAN CONTROL</small><h2>Approval inbox</h2></div></div><div id="approvals" class="empty">No actions need approval.</div></article></section>
-      <section class="panel trace-panel"><div class="panel-title"><div><small>TRACE INSPECTOR</small><h2 id="trace-title">Select a run</h2></div><div class="trace-actions"><button class="ghost" id="replay" disabled>Replay</button><button class="ghost" id="compare" disabled>Compare with…</button></div></div><div id="run-summary"></div><div id="trace" class="empty">Step inputs, outputs, timing, and errors will appear here.</div></section>
-    </section>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>AgentOps Control Plane</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/metrics.css" />
+    <link rel="stylesheet" href="/static/auth.css" />
+    <link rel="stylesheet" href="/static/templates.css" />
+    <link rel="stylesheet" href="/static/stream.css" />
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <span class="mark">A</span>
+        <div><strong>AgentOps</strong><small>CONTROL PLANE</small></div>
+      </div>
+      <nav>
+        <button class="nav active" data-view="operations">Operations</button
+        ><button class="nav" data-view="builder">Builder</button
+        ><button class="nav" data-view="quality">Quality</button>
+      </nav>
+      <div class="session">
+        <span class="health"
+          ><i></i><span id="health-label">Checking system</span></span
+        ><button class="ghost" id="logout" hidden>Log out</button>
+      </div>
+    </header>
+    <main>
+      <section id="operations" class="view active">
+        <div class="hero">
+          <div>
+            <p class="eyebrow">LOCAL-FIRST AGENT OPERATIONS</p>
+            <h1>Observe every run.<br /><em>Control every action.</em></h1>
+            <p class="lede">
+              Trace workflows, inspect failures, approve sensitive steps, replay
+              runs, and measure quality without exporting operational data.
+            </p>
+          </div>
+          <div class="demo-actions">
+            <button
+              id="demo-tour"
+              title="Streamed draft -> human approval -> QA handoff"
+            >
+              Support tour</button
+            ><button
+              id="demo-quality"
+              title="Dataset eval: v1 fails 2 cases, v2 fixes them"
+            >
+              Regression check</button
+            ><button
+              id="demo-incident"
+              title="A failing run with retries and a triggered alert"
+            >
+              Incident</button
+            ><label class="demo-reset"
+              ><input type="checkbox" id="demo-reset" /> reset demo data</label
+            >
+          </div>
+        </div>
+        <section class="metrics">
+          <article><span>Total runs</span><b id="total">0</b></article>
+          <article><span>Success rate</span><b id="success">0%</b></article>
+          <article><span>Failed runs</span><b id="failed">0</b></article>
+          <article><span>Awaiting approval</span><b id="pending">0</b></article>
+          <article><span>Model tokens</span><b id="tokens">0</b></article>
+          <article><span>Estimated cost</span><b id="cost">$0.00</b></article>
+        </section>
+        <section class="panel trend-panel">
+          <div class="panel-title">
+            <div>
+              <small>PERFORMANCE TREND</small>
+              <h2>Latency and cost by run</h2>
+            </div>
+          </div>
+          <div id="trends" class="trend-bars">
+            <span class="empty">Run workflows to build a trend.</span>
+          </div>
+        </section>
+        <section class="panel stream-panel">
+          <div class="panel-title">
+            <div>
+              <small>LIVE PROVIDER STREAM</small>
+              <h2>Current model output</h2>
+            </div>
+            <button class="ghost" id="clear-stream">Clear</button>
+          </div>
+          <pre id="live-output">Waiting for a streamed LLM run.</pre>
+        </section>
+        <section class="grid">
+          <article class="panel">
+            <div class="panel-title">
+              <div>
+                <small>EXECUTION FEED</small>
+                <h2>Recent workflow runs</h2>
+              </div>
+              <button class="ghost" id="refresh">Refresh</button>
+            </div>
+            <div id="runs" class="empty">No runs yet.</div>
+          </article>
+          <article class="panel">
+            <div class="panel-title">
+              <div>
+                <small>HUMAN CONTROL</small>
+                <h2>Approval inbox</h2>
+              </div>
+            </div>
+            <div id="approvals" class="empty">No actions need approval.</div>
+          </article>
+        </section>
+        <section class="panel trace-panel">
+          <div class="panel-title">
+            <div>
+              <small>TRACE INSPECTOR</small>
+              <h2 id="trace-title">Select a run</h2>
+            </div>
+            <div class="trace-actions">
+              <button class="ghost" id="replay" disabled>Replay</button
+              ><button class="ghost" id="compare" disabled>
+                Compare with…
+              </button>
+            </div>
+          </div>
+          <div id="run-summary"></div>
+          <div id="trace" class="empty">
+            Step inputs, outputs, timing, and errors will appear here.
+          </div>
+        </section>
+      </section>
 
-    <section id="builder" class="view">
-      <div class="section-head"><div><p class="eyebrow">WORKFLOW STUDIO</p><h1>Build with clear,<br><em>inspectable steps.</em></h1></div><p class="lede">Choose a project, arrange tools, configure each step, and run the immutable workflow version.</p></div>
-      <section class="builder-grid">
-        <article class="panel"><div class="panel-title"><div><small>START FAST</small><h2>Workflow templates</h2></div></div><div id="templates"></div><div class="panel-title toolbox-title"><div><small>TOOLBOX</small><h2>Available tools</h2></div></div><div id="toolbox"></div></article>
-        <article class="panel canvas"><div class="builder-form"><label>Project<select id="project-select"></select></label><label>Workflow name<input id="workflow-name" value="New workflow" maxlength="100"></label></div><div class="panel-title"><div><small>EXECUTION ORDER</small><h2>Workflow steps</h2></div><button class="ghost" id="clear-steps">Clear</button></div><div id="steps" class="empty">Add a tool to begin.</div><div class="builder-actions"><button id="save-workflow">Save workflow version</button><button class="ghost" id="save-run">Save & run</button></div></article>
-        <article class="panel"><div class="panel-title"><div><small>CONFIGURATION</small><h2>Selected step</h2></div></div><div id="step-config" class="empty">Select a workflow step.</div></article>
+      <section id="builder" class="view">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">WORKFLOW STUDIO</p>
+            <h1>Build with clear,<br /><em>inspectable steps.</em></h1>
+          </div>
+          <p class="lede">
+            Choose a project, arrange tools, configure each step, and run the
+            immutable workflow version.
+          </p>
+        </div>
+        <section class="builder-grid">
+          <article class="panel">
+            <div class="panel-title">
+              <div>
+                <small>START FAST</small>
+                <h2>Workflow templates</h2>
+              </div>
+            </div>
+            <div id="templates"></div>
+            <div class="panel-title toolbox-title">
+              <div>
+                <small>TOOLBOX</small>
+                <h2>Available tools</h2>
+              </div>
+            </div>
+            <div id="toolbox"></div>
+          </article>
+          <article class="panel canvas">
+            <div class="builder-form">
+              <label>Project<select id="project-select"></select></label
+              ><label
+                >Workflow name<input
+                  id="workflow-name"
+                  value="New workflow"
+                  maxlength="100"
+              /></label>
+            </div>
+            <div class="panel-title">
+              <div>
+                <small>EXECUTION ORDER</small>
+                <h2>Workflow steps</h2>
+              </div>
+              <button class="ghost" id="clear-steps">Clear</button>
+            </div>
+            <div id="steps" class="empty">Add a tool to begin.</div>
+            <div class="builder-actions">
+              <button id="save-workflow">Save workflow version</button
+              ><button class="ghost" id="save-run">Save & run</button>
+            </div>
+          </article>
+          <article class="panel">
+            <div class="panel-title">
+              <div>
+                <small>CONFIGURATION</small>
+                <h2>Selected step</h2>
+              </div>
+            </div>
+            <div id="step-config" class="empty">Select a workflow step.</div>
+          </article>
+        </section>
       </section>
-    </section>
 
-    <section id="quality" class="view">
-      <div class="section-head"><div><p class="eyebrow">QUALITY LAB</p><h1>Catch regressions<br><em>before release.</em></h1></div><p class="lede">Evaluate immutable workflow versions against datasets, gate releases, and diff case-level regressions between runs.</p></div>
-      <section class="grid">
-        <article class="panel">
-          <div class="panel-title"><div><small>DATASETS</small><h2>Evaluation suites</h2></div></div>
-          <div id="datasets" class="empty">No datasets yet. Create one below.</div>
-          <details class="create-box"><summary>Create dataset</summary>
-            <label>Project<select id="dataset-project"></select></label>
-            <label>Name<input id="dataset-name" maxlength="100" placeholder="Ticket classification"></label>
-            <label>Cases — JSON array<textarea id="dataset-cases" rows="6" placeholder='[{"input": "My invoice is wrong", "expected": "BILLING", "matcher": "contains"}]'></textarea></label>
-            <button id="create-dataset">Create dataset</button>
-          </details>
-        </article>
-        <article class="panel">
-          <div class="panel-title"><div><small>HISTORY</small><h2>Evaluation results</h2></div><button class="ghost" id="compare-evals" disabled>Compare selected</button></div>
-          <div id="evaluations" class="empty">No evaluations yet.</div>
-          <details class="create-box"><summary>Run evaluation</summary>
-            <label>Project<select id="eval-project"></select></label>
-            <label>Workflow version<select id="eval-workflow"></select></label>
-            <label>Dataset<select id="eval-dataset"></select></label>
-            <label>Gate: min pass rate (0–1)<input id="eval-pass-min" type="number" min="0" max="1" step="0.05" placeholder="0.8"></label>
-            <label>Gate: max cost ($)<input id="eval-max-cost" type="number" min="0" step="0.01" placeholder="0.05"></label>
-            <label>Execution<select id="eval-execution"><option value="queued">Queued (progress)</option><option value="sync">Sync</option></select></label>
-            <button id="run-eval">Run evaluation</button>
-          </details>
-        </article>
+      <section id="quality" class="view">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">QUALITY LAB</p>
+            <h1>Catch regressions<br /><em>before release.</em></h1>
+          </div>
+          <p class="lede">
+            Evaluate immutable workflow versions against datasets, gate
+            releases, and diff case-level regressions between runs.
+          </p>
+        </div>
+        <section class="grid">
+          <article class="panel">
+            <div class="panel-title">
+              <div>
+                <small>DATASETS</small>
+                <h2>Evaluation suites</h2>
+              </div>
+            </div>
+            <div id="datasets" class="empty">
+              No datasets yet. Create one below.
+            </div>
+            <details class="create-box">
+              <summary>Create dataset</summary>
+              <label>Project<select id="dataset-project"></select></label>
+              <label
+                >Name<input
+                  id="dataset-name"
+                  maxlength="100"
+                  placeholder="Ticket classification"
+              /></label>
+              <label
+                >Cases — JSON array<textarea
+                  id="dataset-cases"
+                  rows="6"
+                  placeholder='[{"input": "My invoice is wrong", "expected": "BILLING", "matcher": "contains"}]'
+                ></textarea>
+              </label>
+              <button id="create-dataset">Create dataset</button>
+            </details>
+          </article>
+          <article class="panel">
+            <div class="panel-title">
+              <div>
+                <small>HISTORY</small>
+                <h2>Evaluation results</h2>
+              </div>
+              <button
+                class="ghost"
+                id="compare-evals"
+                title="Select exactly two evaluations; the older one is the baseline"
+                disabled
+              >
+                Compare selected
+              </button>
+            </div>
+            <div id="evaluations" class="empty">No evaluations yet.</div>
+            <details class="create-box">
+              <summary>Run evaluation</summary>
+              <label>Project<select id="eval-project"></select></label>
+              <label
+                >Workflow version<select id="eval-workflow"></select
+              ></label>
+              <label>Dataset<select id="eval-dataset"></select></label>
+              <label
+                >Gate: min pass rate (0–1)<input
+                  id="eval-pass-min"
+                  type="number"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  placeholder="0.8"
+              /></label>
+              <label
+                >Gate: max cost ($)<input
+                  id="eval-max-cost"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="0.05"
+              /></label>
+              <label
+                >Execution<select id="eval-execution">
+                  <option value="queued">Queued (progress)</option>
+                  <option value="sync">Sync</option>
+                </select></label
+              >
+              <button id="run-eval">Run evaluation</button>
+            </details>
+          </article>
+        </section>
+        <section class="panel" id="eval-diff-panel" hidden>
+          <div class="panel-title">
+            <div>
+              <small>REGRESSION DIFF</small>
+              <h2 id="eval-diff-title">Evaluation comparison</h2>
+            </div>
+            <button class="ghost" id="close-diff">Close</button>
+          </div>
+          <div id="eval-diff" class="empty">
+            Select two evaluations and compare them.
+          </div>
+        </section>
       </section>
-      <section class="panel" id="eval-diff-panel" hidden>
-        <div class="panel-title"><div><small>REGRESSION DIFF</small><h2 id="eval-diff-title">Evaluation comparison</h2></div><button class="ghost" id="close-diff">Close</button></div>
-        <div id="eval-diff" class="empty">Select two evaluations and compare them.</div>
-      </section>
-    </section>
-  </main>
-  <dialog id="json-dialog" aria-labelledby="dialog-title"><form method="dialog"><div class="panel-title"><h2 id="dialog-title">Details</h2><button class="ghost">Close</button></div><pre id="dialog-json"></pre></form></dialog>
-  <dialog id="compare-dialog" aria-labelledby="compare-title"><div class="panel-title"><h2 id="compare-title">Compare with…</h2><button class="ghost" id="compare-cancel">Close</button></div><label>Recent run<select id="compare-select"></select></label><button id="compare-confirm">Compare</button></dialog>
-  <dialog id="login-dialog" class="login-dialog" aria-labelledby="login-title"><form id="login-form"><p class="eyebrow">SECURE ACCESS</p><h2 id="login-title">Sign in to AgentOps</h2><p>Enter the operator token configured for this environment. It remains in this browser tab only.</p><input name="username" value="agentops" autocomplete="username" hidden><label>Access token<input id="login-token" name="access-token" type="password" autocomplete="one-time-code" required></label><p id="login-error" class="error" role="alert"></p><button type="submit">Sign in</button></form></dialog>
-  <div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
-  <script src="/static/app.js"></script>
-</body>
+    </main>
+    <dialog id="json-dialog" aria-labelledby="dialog-title">
+      <form method="dialog">
+        <div class="panel-title">
+          <h2 id="dialog-title">Details</h2>
+          <button class="ghost">Close</button>
+        </div>
+        <pre id="dialog-json"></pre>
+      </form>
+    </dialog>
+    <dialog id="compare-dialog" aria-labelledby="compare-title">
+      <div class="panel-title">
+        <h2 id="compare-title">Compare with…</h2>
+        <button class="ghost" id="compare-cancel">Close</button>
+      </div>
+      <label>Recent run<select id="compare-select"></select></label
+      ><button id="compare-confirm">Compare</button>
+    </dialog>
+    <dialog
+      id="login-dialog"
+      class="login-dialog"
+      aria-labelledby="login-title"
+    >
+      <form id="login-form">
+        <p class="eyebrow">SECURE ACCESS</p>
+        <h2 id="login-title">Sign in to AgentOps</h2>
+        <p>
+          Enter the operator token configured for this environment. It remains
+          in this browser tab only.
+        </p>
+        <input
+          name="username"
+          value="agentops"
+          autocomplete="username"
+          hidden
+        /><label
+          >Access token<input
+            id="login-token"
+            name="access-token"
+            type="password"
+            autocomplete="one-time-code"
+            required
+        /></label>
+        <p id="login-error" class="error" role="alert"></p>
+        <button type="submit">Sign in</button>
+      </form>
+    </dialog>
+    <div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+    <script src="/static/app.js"></script>
+  </body>
 </html>
