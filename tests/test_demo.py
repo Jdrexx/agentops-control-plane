@@ -61,9 +61,7 @@ def test_demo_quality_shows_regression_fixed(client: TestClient):
     failed_cases = [case for case in v1["results"] if not case["passed"]]
     assert len(failed_cases) == 2
     assert all(case["expected"] == "BILLING" for case in failed_cases)
-    assert all(
-        case["passed"] for case in v2["results"] if case["expected"] == "BILLING"
-    )
+    assert all(case["passed"] for case in v2["results"] if case["expected"] == "BILLING")
 
 
 def test_demo_incident_fails_after_retries_and_triggers_alert(client: TestClient):
@@ -73,6 +71,16 @@ def test_demo_incident_fails_after_retries_and_triggers_alert(client: TestClient
     assert run["status"] == "failed"
     assert "connection refused" in run["error"]
     assert run["spans"][-1]["status"] == "failed"
+    # The step declares retries=2, so the provider is attempted three times before the
+    # run fails. Asserting the attempts keeps the retry config from silently going dead
+    # (it is read from step["config"], not from the step body).
+    events = client.get("/api/events?limit=500").json()
+    attempts = [
+        event
+        for event in events
+        if event["run_id"] == result["focus_run_id"] and event["event_type"] == "llm.started"
+    ]
+    assert len(attempts) == 3
     alerts = client.get("/api/alerts").json()
     billing_alerts = [alert for alert in alerts if alert["name"] == "Billing sync failing"]
     assert billing_alerts and billing_alerts[0]["triggered"] is True
@@ -91,9 +99,7 @@ def test_demo_seed_is_idempotent(client: TestClient):
 
 def test_demo_reset_recreates_the_project(client: TestClient):
     first = client.post("/api/demo/seed", json={"scenario": "tour"}).json()
-    second = client.post(
-        "/api/demo/seed", json={"scenario": "tour", "reset": True}
-    ).json()
+    second = client.post("/api/demo/seed", json={"scenario": "tour", "reset": True}).json()
     assert second["project_id"] != first["project_id"]
     assert client.get(f"/api/projects/{first['project_id']}").status_code == 404
     run = client.get(f"/api/runs/{second['focus_run_id']}").json()
