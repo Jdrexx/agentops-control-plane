@@ -7,6 +7,7 @@ services:
       AGENTOPS_DATABASE: /data/agentops.db
       AGENTOPS_API_KEY: ${AGENTOPS_API_KEY:-}
       AGENTOPS_ENCRYPTION_KEY: ${AGENTOPS_ENCRYPTION_KEY:-}
+      AGENTOPS_REQUIRE_AUTH: ${AGENTOPS_REQUIRE_AUTH:-0}
     volumes:
       - agentops-data:/data
     restart: unless-stopped
@@ -31,6 +32,7 @@ services:
       DATABASE_URL: postgresql://agentops:agentops@postgres:5432/agentops
       AGENTOPS_API_KEY: ${AGENTOPS_API_KEY:-}
       AGENTOPS_ENCRYPTION_KEY: ${AGENTOPS_ENCRYPTION_KEY:-}
+      AGENTOPS_REQUIRE_AUTH: ${AGENTOPS_REQUIRE_AUTH:-0}
     depends_on:
       postgres:
         condition: service_healthy
