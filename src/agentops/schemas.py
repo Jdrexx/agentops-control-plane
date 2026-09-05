@@ -5,12 +5,8 @@ from typing import Annotated, Any, Literal, Self
 
 from pydantic import BaseModel, Field, StringConstraints, model_validator
 
-ShortName = Annotated[
-    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)
-]
-MemoryKey = Annotated[
-    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
-]
+ShortName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+MemoryKey = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 
 
 class ProjectCreate(BaseModel):
@@ -83,9 +79,7 @@ class Step(BaseModel):
                     for role in approver_roles
                 )
             ):
-                raise ValueError(
-                    "config.approver_roles must be a non-empty list of admin/operator"
-                )
+                raise ValueError("config.approver_roles must be a non-empty list of admin/operator")
         if self.tool == "handoff":
             if "workflow_id" not in self.config:
                 raise ValueError("config.workflow_id is required for handoff steps")

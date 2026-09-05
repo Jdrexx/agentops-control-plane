@@ -147,12 +147,8 @@ def test_llm_step_runs_offline_with_mock_provider(client: TestClient, project: d
             },
         ],
     )
-    first = client.post(
-        f"/api/workflows/{workflow['id']}/runs", json={"input": "customer"}
-    ).json()
-    second = client.post(
-        f"/api/workflows/{workflow['id']}/runs", json={"input": "customer"}
-    ).json()
+    first = client.post(f"/api/workflows/{workflow['id']}/runs", json={"input": "customer"}).json()
+    second = client.post(f"/api/workflows/{workflow['id']}/runs", json={"input": "customer"}).json()
     assert first["status"] == "completed"
     assert first["output"] == second["output"]
     assert "[mock:" in first["output"]

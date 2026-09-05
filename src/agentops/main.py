@@ -56,6 +56,11 @@ def create_app(database_path: str | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         database.initialize()
+        if os.getenv("AGENTOPS_REQUIRE_AUTH") == "1" and not authenticator.enabled():
+            raise RuntimeError(
+                "AGENTOPS_REQUIRE_AUTH=1 requires authentication to be configured: "
+                "set AGENTOPS_API_KEY or create a user before starting."
+            )
         app.state.service = AgentOpsService(
             database, consume_runs=process_mode in {"all", "worker"}
         )
@@ -230,6 +235,8 @@ def create_app(database_path: str | None = None) -> FastAPI:
             result = seed_demo(service(request), body.scenario, reset=body.reset)
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
+        except RuntimeError as error:
+            raise HTTPException(503, f"demo unavailable: {error}") from error
         if body.scenario == "tour" and result.get("next_action") == "approve":
             pending = service(request).list_approvals("pending")
             result["approval_id"] = next(
@@ -340,9 +347,7 @@ def create_app(database_path: str | None = None) -> FastAPI:
         if idempotency_key is not None:
             if len(idempotency_key) > 128 or not re.fullmatch(r"[A-Za-z0-9._-]+", idempotency_key):
                 raise HTTPException(422, "invalid Idempotency-Key")
-            existing = service(request).find_run_by_idempotency_key(
-                idempotency_key, workflow_id
-            )
+            existing = service(request).find_run_by_idempotency_key(idempotency_key, workflow_id)
             if existing is not None:
                 return JSONResponse(existing, status_code=200)
         return service(request).start_run(
@@ -559,9 +564,7 @@ def create_app(database_path: str | None = None) -> FastAPI:
                 return
             actor = authenticated
         project_ids = (
-            None
-            if actor.role == "admin"
-            else app.state.service.project_ids_for_user(actor.name)
+            None if actor.role == "admin" else app.state.service.project_ids_for_user(actor.name)
         )
         try:
             while True:
@@ -627,7 +630,11 @@ def create_app(database_path: str | None = None) -> FastAPI:
     @app.put("/api/secrets", status_code=201)
     def put_secret(body: SecretCreate, request: Request):
         require_project_access(request, body.project_id, write=True)
-        return service(request).put_secret(body.project_id, body.name, body.value)
+        try:
+            return service(request).put_secret(body.project_id, body.name, body.value)
+        except RuntimeError as error:
+            # AGENTOPS_ENCRYPTION_KEY unset — the secrets feature is unconfigured.
+            raise HTTPException(503, f"secrets unavailable: {error}") from error
 
     @app.get("/api/secrets")
     def secrets(request: Request, project_id: int):
@@ -637,7 +644,10 @@ def create_app(database_path: str | None = None) -> FastAPI:
     @app.post("/api/secrets/{secret_id}/reveal")
     def reveal_secret(secret_id: int, request: Request):
         # POST (not GET) so the audit middleware records every reveal.
-        return {"value": service(request).reveal_secret(secret_id)}
+        try:
+            return {"value": service(request).reveal_secret(secret_id)}
+        except RuntimeError as error:
+            raise HTTPException(503, f"secrets unavailable: {error}") from error
 
     @app.get("/api/audit")
     def audit_events(

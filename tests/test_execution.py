@@ -90,8 +90,8 @@ def test_schedule_dispatch_and_webhook_delivery(client: TestClient, project: dic
     assert disabled["enabled"] is False
 
     delivered = []
-    client.app.state.service._send_webhook = (
-        lambda url, payload, delivery_id=None: delivered.append((url, payload, delivery_id))
+    client.app.state.service._send_webhook = lambda url, payload, delivery_id=None: (
+        delivered.append((url, payload, delivery_id))
     )
     webhook = client.post(
         "/api/webhooks",

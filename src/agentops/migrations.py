@@ -49,6 +49,7 @@ def _table_columns(connection: Any, table: str, dialect: str) -> set[str]:
             (table,),
         ).fetchall()
         return {str(row["column_name"]) for row in rows}
+    # nosemgrep: sqlalchemy-execute-raw-query  # table is an internal constant, never user input
     rows = connection.execute(f"PRAGMA table_info({table})").fetchall()
     return {str(row["name"]) for row in rows}
 
@@ -84,6 +85,7 @@ def _m_0003_span_cost_columns(connection: Any, dialect: str) -> None:
         "cost_usd": "REAL NOT NULL DEFAULT 0",
     }.items():
         if name not in columns:
+            # nosemgrep: sqlalchemy-execute-raw-query  # static dict values
             connection.execute(f"ALTER TABLE spans ADD COLUMN {name} {definition}")
 
 
@@ -107,6 +109,7 @@ def _m_0005_evaluation_progress(connection: Any, dialect: str) -> None:
         "gate_reasons": "TEXT",
     }.items():
         if name not in columns:
+            # nosemgrep: sqlalchemy-execute-raw-query  # static dict values
             connection.execute(f"ALTER TABLE evaluations ADD COLUMN {name} {definition}")
 
 

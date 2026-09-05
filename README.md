@@ -32,25 +32,25 @@ flowchart LR
 
 ## Capability matrix
 
-| Capability | Surface |
-|---|---|
-| Workflow studio with immutable versions and templates | Dashboard |
-| Run execution: sync/queued, retries, cancellation, crash recovery | Dashboard + API |
-| Step traces, JSON inspection, replay, run comparison | Dashboard |
-| Handoffs, agent trees, project memory, loop detection | Dashboard + API |
-| Provider adapters: mock, Ollama, OpenAI, Anthropic | API + workflow config |
-| Live streamed model output | Dashboard |
-| Approvals with expiry | Dashboard; escalation is API-only |
-| Evaluations: datasets, 5 matchers, release gates, case-level diffs | Dashboard |
-| Schedules | API |
-| Webhooks with delivery records | API |
-| Alerts | API |
-| Notifications (Slack, email) | Env-configured |
-| Project import/export (versioned package) | API |
-| Encrypted secrets vault (`credential_ref` in LLM steps) | API + workflow config |
-| Authentication, roles, audit log, trace redaction | Dashboard + API |
-| OTLP-shaped trace export | Experimental |
-| S3-compatible backups (checksummed; not client-side encrypted) | Script / Docker backup mode |
+| Capability                                                         | Surface                           |
+| ------------------------------------------------------------------ | --------------------------------- |
+| Workflow studio with immutable versions and templates              | Dashboard                         |
+| Run execution: sync/queued, retries, cancellation, crash recovery  | Dashboard + API                   |
+| Step traces, JSON inspection, replay, run comparison               | Dashboard                         |
+| Handoffs, agent trees, project memory, loop detection              | Dashboard + API                   |
+| Provider adapters: mock, Ollama, OpenAI, Anthropic                 | API + workflow config             |
+| Live streamed model output                                         | Dashboard                         |
+| Approvals with expiry                                              | Dashboard; escalation is API-only |
+| Evaluations: datasets, 5 matchers, release gates, case-level diffs | Dashboard                         |
+| Schedules                                                          | API                               |
+| Webhooks with delivery records                                     | API                               |
+| Alerts                                                             | API                               |
+| Notifications (Slack, email)                                       | Env-configured                    |
+| Project import/export (versioned package)                          | API                               |
+| Encrypted secrets vault (`credential_ref` in LLM steps)            | API + workflow config             |
+| Authentication, roles, audit log, trace redaction                  | Dashboard + API                   |
+| OTLP-shaped trace export                                           | Experimental                      |
+| S3-compatible backups (checksummed; not client-side encrypted)     | Script / Docker backup mode       |
 
 ## Quick portfolio demo
 
@@ -106,6 +106,10 @@ uv run uvicorn src.agentops.main:app --port 8110
 ```
 
 Provider keys are read from `OPENAI_API_KEY` and `ANTHROPIC_API_KEY`. Ollama defaults to `http://127.0.0.1:11434` and can be changed with `OLLAMA_HOST`. Set `AGENTOPS_OTLP_ENDPOINT` to export completed and failed traces as OTLP-shaped JSON. Set `AGENTOPS_DEMO_ENABLED=0` to disable the demo scenarios on an exposed instance.
+
+Project secrets are encrypted at rest with `AGENTOPS_ENCRYPTION_KEY` (Fernet). If the key is unset, the secrets endpoints return `503 secrets unavailable` instead of crashing. Reveals are audited: `POST /api/secrets/{id}/reveal` (never GET).
+
+Authentication is disabled by default (every local request acts as `local-user`/admin). Set `AGENTOPS_API_KEY` (bootstrap admin) or create users to enable bearer-token auth. To refuse to start with auth disabled, set `AGENTOPS_REQUIRE_AUTH=1` — the app fails fast if no auth is configured. Never bind beyond loopback with auth disabled.
 
 ## Containers
 

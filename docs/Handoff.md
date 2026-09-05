@@ -10,6 +10,7 @@ dashboard, REST API, scheduler, queue, and deterministic mock LLM provider — t
 entire product is demonstrable offline with zero API keys.
 
 Public repo: https://github.com/Jdrexx/agentops-control-plane
+
 ## Where we are (2026-08-18/19)
 
 A 20-item robustness plan (Triad+ multi-voice analysis, report in
@@ -19,18 +20,18 @@ remaining 4 are scoped below.
 
 ### Shipped since the Triad analysis (all merged to `main`, CI green)
 
-| # | Item | PR(s) | What landed |
-|---|------|-------|-------------|
-| 1 | Deterministic mock provider | #11 | Paced streaming, pinned response scripts (`AGENTOPS_MOCK_*`), failure injection, exact token counts — demo runs fully offline |
-| 2 | Server-side demo scenarios | #12 | `POST /api/demo/seed` with tour / quality / incident scenes, idempotent by project, deep-links |
-| 3 | Versioned schema migrations | #11 | Hand-rolled ledger (0001–0009), cross-process lock (`BEGIN IMMEDIATE` / `pg_advisory_lock`), Postgres previously never got later columns |
-| 4 | Webhook outbox + SSRF + HMAC | #15 | Delivery off the request path, atomic claims + lease expiry, 6 attempts → dead-letter, private-IP rejection at create and at delivery, `X-AgentOps-Signature` HMAC, orphan dead-lettering |
-| 5 | Quality Lab product surface | #13 | Stable case IDs, queued evals with progress/cancel, release gates (`pass_rate_min`), case-level diff (regressed/fixed/removed/added/stable_*), jsonschema matcher, dataset delete, full dashboard UI |
-| 6 | Provider usage + retries | #16 | `generate_detailed()` → real token usage into spans (Ollama eval counts, OpenAI/Anthropic usage, exact mock), retry classification (408/429/5xx + transport, Retry-After/backoff, `AGENTOPS_PROVIDER_RETRIES`), malformed streams fail, no retry after published chunks |
-| 7 | Secrets → LLM steps | #17 | `credential_ref` in LLM step config, decrypted project secret passed as provider API key, reveals moved to POST and audited (incl. workflow-time reveals), plaintext never in runs/spans/exports |
-| 9 | Pagination + idempotency | #18 | `Idempotency-Key` on run creation (unique partial index per workflow), cursor pagination on `/api/audit` + new `/api/events`, run filters (status/project_id/has_parent), run-selector compare dialog |
-| 13 | Approval governance | #19 | `approver_roles` enforced at decision time, `decided_by` + `policy` on approval rows, read-time expiry derivation (no scheduler dependency), expired decisions materialize + reject, viewer-only policies rejected |
-| 14 | README proof | #14 | Capability matrix, Mermaid architecture diagram, `docs/demo.gif` (605 KB, offline), honest Limitations section |
+| #   | Item                         | PR(s) | What landed                                                                                                                                                                                                                                                             |
+| --- | ---------------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Deterministic mock provider  | #11   | Paced streaming, pinned response scripts (`AGENTOPS_MOCK_*`), failure injection, exact token counts — demo runs fully offline                                                                                                                                           |
+| 2   | Server-side demo scenarios   | #12   | `POST /api/demo/seed` with tour / quality / incident scenes, idempotent by project, deep-links                                                                                                                                                                          |
+| 3   | Versioned schema migrations  | #11   | Hand-rolled ledger (0001–0009), cross-process lock (`BEGIN IMMEDIATE` / `pg_advisory_lock`), Postgres previously never got later columns                                                                                                                                |
+| 4   | Webhook outbox + SSRF + HMAC | #15   | Delivery off the request path, atomic claims + lease expiry, 6 attempts → dead-letter, private-IP rejection at create and at delivery, `X-AgentOps-Signature` HMAC, orphan dead-lettering                                                                               |
+| 5   | Quality Lab product surface  | #13   | Stable case IDs, queued evals with progress/cancel, release gates (`pass_rate_min`), case-level diff (regressed/fixed/removed/added/stable_*), jsonschema matcher, dataset delete, full dashboard UI                                                                    |
+| 6   | Provider usage + retries     | #16   | `generate_detailed()` → real token usage into spans (Ollama eval counts, OpenAI/Anthropic usage, exact mock), retry classification (408/429/5xx + transport, Retry-After/backoff, `AGENTOPS_PROVIDER_RETRIES`), malformed streams fail, no retry after published chunks |
+| 7   | Secrets → LLM steps          | #17   | `credential_ref` in LLM step config, decrypted project secret passed as provider API key, reveals moved to POST and audited (incl. workflow-time reveals), plaintext never in runs/spans/exports                                                                        |
+| 9   | Pagination + idempotency     | #18   | `Idempotency-Key` on run creation (unique partial index per workflow), cursor pagination on `/api/audit` + new `/api/events`, run filters (status/project_id/has_parent), run-selector compare dialog                                                                   |
+| 13  | Approval governance          | #19   | `approver_roles` enforced at decision time, `decided_by` + `policy` on approval rows, read-time expiry derivation (no scheduler dependency), expired decisions materialize + reject, viewer-only policies rejected                                                      |
+| 14  | README proof                 | #14   | Capability matrix, Mermaid architecture diagram, `docs/demo.gif` (605 KB, offline), honest Limitations section                                                                                                                                                          |
 
 Also in the baseline (pre-Triad, already on `main`): auth (API key / user roles /
 project membership), approval workflow + escalation, replay, run comparison,

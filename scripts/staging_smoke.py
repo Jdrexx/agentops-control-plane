@@ -24,9 +24,7 @@ class SmokeError(RuntimeError):
 
 
 class SmokeClient(Protocol):
-    def request(
-        self, method: str, path: str, payload: dict[str, Any] | None = None
-    ) -> Any: ...
+    def request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> Any: ...
 
 
 class ApiClient:
@@ -35,9 +33,7 @@ class ApiClient:
         self.token = token
         self.timeout = timeout
 
-    def request(
-        self, method: str, path: str, payload: dict[str, Any] | None = None
-    ) -> Any:
+    def request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
         data = None if payload is None else json.dumps(payload).encode()
         # The CLI validates the base URL as HTTPS before constructing this client.
         request = urllib.request.Request(  # noqa: S310  # nosec B310

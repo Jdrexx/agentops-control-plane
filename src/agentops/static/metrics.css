@@ -31,20 +31,40 @@
   border-radius: 3px 3px 0 0;
   flex: 1;
   min-width: 5px;
-  opacity: .8;
+  opacity: 0.8;
 }
 
 .trend-bar.failed {
   background: var(--red);
 }
 
-.trend-bar.h1 { height: 10%; }
-.trend-bar.h2 { height: 20%; }
-.trend-bar.h3 { height: 30%; }
-.trend-bar.h4 { height: 40%; }
-.trend-bar.h5 { height: 50%; }
-.trend-bar.h6 { height: 60%; }
-.trend-bar.h7 { height: 70%; }
-.trend-bar.h8 { height: 80%; }
-.trend-bar.h9 { height: 90%; }
-.trend-bar.h10 { height: 100%; }
+.trend-bar.h1 {
+  height: 10%;
+}
+.trend-bar.h2 {
+  height: 20%;
+}
+.trend-bar.h3 {
+  height: 30%;
+}
+.trend-bar.h4 {
+  height: 40%;
+}
+.trend-bar.h5 {
+  height: 50%;
+}
+.trend-bar.h6 {
+  height: 60%;
+}
+.trend-bar.h7 {
+  height: 70%;
+}
+.trend-bar.h8 {
+  height: 80%;
+}
+.trend-bar.h9 {
+  height: 90%;
+}
+.trend-bar.h10 {
+  height: 100%;
+}

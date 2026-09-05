@@ -10,9 +10,7 @@ class FakeSmokeClient:
         self.calls: list[tuple[str, str, dict[str, Any] | None]] = []
         self.run_reads = 0
 
-    def request(
-        self, method: str, path: str, payload: dict[str, Any] | None = None
-    ) -> Any:
+    def request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
         self.calls.append((method, path, payload))
         if path == "/api/ready":
             return {"status": "ready", "database": "ok", "queue": "redis", "process": "web"}
