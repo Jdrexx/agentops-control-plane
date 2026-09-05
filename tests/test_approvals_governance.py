@@ -5,9 +5,7 @@ from fastapi.testclient import TestClient
 from src.agentops.main import create_app
 
 
-def _approval_workflow(
-    client: TestClient, project_id: int, approver_roles=None, headers=None
-):
+def _approval_workflow(client: TestClient, project_id: int, approver_roles=None, headers=None):
     config = {"prompt": "Approve this?"}
     if approver_roles is not None:
         config["approver_roles"] = approver_roles

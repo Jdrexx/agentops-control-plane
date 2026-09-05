@@ -116,9 +116,7 @@ def test_project_membership_scopes_resources_and_live_updates(tmp_path: Path, mo
         allowed_project = client.post(
             "/api/projects", json={"name": "Allowed"}, headers=admin
         ).json()
-        hidden_project = client.post(
-            "/api/projects", json={"name": "Hidden"}, headers=admin
-        ).json()
+        hidden_project = client.post("/api/projects", json={"name": "Hidden"}, headers=admin).json()
         client.put(
             "/api/project-members",
             json={
@@ -223,9 +221,10 @@ def test_project_membership_scopes_resources_and_live_updates(tmp_path: Path, mo
         assert [item["id"] for item in client.get("/api/projects", headers=operator).json()] == [
             allowed_project["id"]
         ]
-        assert {
-            item["id"] for item in client.get("/api/workflows", headers=operator).json()
-        } == {allowed_workflow["id"], allowed_approval_workflow["id"]}
+        assert {item["id"] for item in client.get("/api/workflows", headers=operator).json()} == {
+            allowed_workflow["id"],
+            allowed_approval_workflow["id"],
+        }
         visible_runs = client.get("/api/runs", headers=operator).json()
         assert {item["workflow_id"] for item in visible_runs} == {
             allowed_workflow["id"],
@@ -234,9 +233,9 @@ def test_project_membership_scopes_resources_and_live_updates(tmp_path: Path, mo
         assert [item["id"] for item in client.get("/api/datasets", headers=operator).json()] == [
             allowed_dataset["id"]
         ]
-        assert [
-            item["id"] for item in client.get("/api/evaluations", headers=operator).json()
-        ] == [allowed_evaluation["id"]]
+        assert [item["id"] for item in client.get("/api/evaluations", headers=operator).json()] == [
+            allowed_evaluation["id"]
+        ]
         assert [item["id"] for item in client.get("/api/schedules", headers=operator).json()] == [
             allowed_schedule["id"]
         ]
@@ -244,9 +243,7 @@ def test_project_membership_scopes_resources_and_live_updates(tmp_path: Path, mo
             item["id"]
             for item in client.get("/api/approvals?status=pending", headers=operator).json()
         ] == [allowed_approval["id"]]
-        assert client.get("/api/stats", headers=operator).json()["total_runs"] == len(
-            visible_runs
-        )
+        assert client.get("/api/stats", headers=operator).json()["total_runs"] == len(visible_runs)
 
         assert (
             client.get(f"/api/workflows/{hidden_workflow['id']}", headers=operator).status_code
@@ -254,13 +251,10 @@ def test_project_membership_scopes_resources_and_live_updates(tmp_path: Path, mo
         )
         assert client.get(f"/api/runs/{hidden_run['id']}", headers=operator).status_code == 403
         assert (
-            client.get(f"/api/datasets/{hidden_dataset['id']}", headers=operator).status_code
-            == 403
+            client.get(f"/api/datasets/{hidden_dataset['id']}", headers=operator).status_code == 403
         )
         assert (
-            client.get(
-                f"/api/evaluations/{hidden_evaluation['id']}", headers=operator
-            ).status_code
+            client.get(f"/api/evaluations/{hidden_evaluation['id']}", headers=operator).status_code
             == 403
         )
         assert (
@@ -300,13 +294,10 @@ def test_project_membership_scopes_resources_and_live_updates(tmp_path: Path, mo
         }
         assert message["stats"]["total_runs"] == len(visible_runs)
 
-        created = client.post(
-            "/api/projects", json={"name": "Operator created"}, headers=operator
-        )
+        created = client.post("/api/projects", json={"name": "Operator created"}, headers=operator)
         assert created.status_code == 201
         assert (
-            client.get(f"/api/projects/{created.json()['id']}", headers=operator).status_code
-            == 200
+            client.get(f"/api/projects/{created.json()['id']}", headers=operator).status_code == 200
         )
 
         unauthorized = client.get("/api/session")

@@ -69,9 +69,8 @@ def test_fresh_database_migrates_to_head_and_is_idempotent(tmp_path: Path):
     assert migrate(database) == ALL_VERSIONS
     assert migrate(database) == []
     with database.connect() as connection:
-        assert (
-            connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
-            == len(MIGRATIONS)
+        assert connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == len(
+            MIGRATIONS
         )
         assert {"expires_at", "escalation_level"} <= _columns(connection, "approvals")
         assert {"input_tokens", "output_tokens", "cost_usd"} <= _columns(connection, "spans")
@@ -106,9 +105,8 @@ def test_legacy_sqlite_database_is_upgraded_in_place(tmp_path: Path):
             "gate",
             "gate_reasons",
         } <= _columns(connection, "evaluations")
-        assert (
-            connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
-            == len(MIGRATIONS)
+        assert connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == len(
+            MIGRATIONS
         )
         # Legacy data survives the upgrade.
         connection.execute(
@@ -139,9 +137,8 @@ def test_initialize_uses_the_migration_ledger(tmp_path: Path):
     database = Database(tmp_path / "app.db")
     database.initialize()
     with database.connect() as connection:
-        assert (
-            connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
-            == len(MIGRATIONS)
+        assert connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == len(
+            MIGRATIONS
         )
 
 
@@ -163,9 +160,8 @@ def test_concurrent_migrations_do_not_race(tmp_path: Path):
     applied_sets = sorted(sorted(result) for result in results)
     assert applied_sets == [[], ALL_VERSIONS], results
     with Database(path).connect() as connection:
-        assert (
-            connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
-            == len(MIGRATIONS)
+        assert connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == len(
+            MIGRATIONS
         )
 
 
@@ -257,16 +253,33 @@ def test_postgres_migration_skips_columns_that_already_exist():
         applied=ALL_VERSIONS,
         columns={
             "approvals": [
-                "id", "run_id", "step_index", "prompt", "status",
-                "expires_at", "escalation_level",
+                "id",
+                "run_id",
+                "step_index",
+                "prompt",
+                "status",
+                "expires_at",
+                "escalation_level",
             ],
             "spans": [
-                "id", "run_id", "step_index", "step_name", "tool", "status",
-                "input_tokens", "output_tokens", "cost_usd",
+                "id",
+                "run_id",
+                "step_index",
+                "step_name",
+                "tool",
+                "status",
+                "input_tokens",
+                "output_tokens",
+                "cost_usd",
             ],
             "runs": [
-                "id", "workflow_id", "parent_run_id", "status", "input",
-                "max_steps", "actor_role",
+                "id",
+                "workflow_id",
+                "parent_run_id",
+                "status",
+                "input",
+                "max_steps",
+                "actor_role",
             ],
         },
     )

@@ -2,7 +2,7 @@
 
 The built-in `mock` provider is deterministic: the same
 `(model, system, prompt)` always produces the same output. For prompts you care
-about, you can *pin* the exact response by dropping a file named after the
+about, you can _pin_ the exact response by dropping a file named after the
 prompt's fingerprint in this directory.
 
 ## How it works

@@ -430,9 +430,7 @@ class AgentOpsService:
     ) -> None:
         prompt = str(step.get("config", {}).get("prompt", "Approve this workflow?"))
         expires_in = int(step.get("config", {}).get("expires_in_seconds", 0))
-        approver_roles = step.get("config", {}).get(
-            "approver_roles", ["admin", "operator"]
-        )
+        approver_roles = step.get("config", {}).get("approver_roles", ["admin", "operator"])
         expires_at = (
             (datetime.now(UTC) + timedelta(seconds=expires_in)).isoformat()
             if expires_in > 0
@@ -910,16 +908,12 @@ class AgentOpsService:
                 raise NotFoundError("approval not found")
             if approval["status"] != "pending":
                 raise ConflictError("approval has already been decided")
-            if (
-                approval["expires_at"] is not None
-                and approval["expires_at"] <= now()
-            ):
+            if approval["expires_at"] is not None and approval["expires_at"] <= now():
                 # Materialize the derived state in its own committed
                 # transaction before raising, so the record reflects reality.
                 with self.db.connect() as connection:
                     connection.execute(
-                        "UPDATE approvals SET status='expired' "
-                        "WHERE id=? AND status='pending'",
+                        "UPDATE approvals SET status='expired' WHERE id=? AND status='pending'",
                         (approval_id,),
                     )
                 raise ConflictError("approval has expired")
@@ -928,9 +922,7 @@ class AgentOpsService:
             actor_name = actor.name if actor is not None else "unknown"
             actor_role = actor.role if actor is not None else "admin"
             if actor_role not in approver_roles:
-                raise ConflictError(
-                    f"role {actor_role} is not allowed to decide this approval"
-                )
+                raise ConflictError(f"role {actor_role} is not allowed to decide this approval")
             connection.execute(
                 "UPDATE approvals SET status=?,note=?,decided_at=?,decided_by=? WHERE id=?",
                 (decision, note, now(), actor_name, approval_id),
@@ -1625,9 +1617,7 @@ ACTUAL: {encode(actual)}""",
         self._outbox_thread.start()
 
     def _outbox_loop(self) -> None:
-        while not self._outbox_stop.wait(
-            int(os.getenv("AGENTOPS_OUTBOX_POLL_MS", "2000")) / 1000
-        ):
+        while not self._outbox_stop.wait(int(os.getenv("AGENTOPS_OUTBOX_POLL_MS", "2000")) / 1000):
             # A transient error must not kill the worker thread; the rows stay
             # pending and are retried on the next poll.
             with suppress(Exception):
@@ -1827,9 +1817,7 @@ ACTUAL: {encode(actual)}""",
                 or address.is_multicast
                 or address.is_unspecified
             ):
-                raise ValueError(
-                    f"webhook URL must not resolve to a private address: {address}"
-                )
+                raise ValueError(f"webhook URL must not resolve to a private address: {address}")
 
     def _send_webhook(
         self, url: str, payload: dict[str, Any], delivery_id: int | None = None
@@ -2111,26 +2099,32 @@ ACTUAL: {encode(actual)}""",
             else:
                 run_scope = approval_scope = span_scope = " AND 1=0"
         with self.db.connect() as connection:
+            # nosemgrep: sqlalchemy-execute-raw-query  # literals only; params bound
             total = connection.execute(
                 f"SELECT COUNT(*) FROM runs WHERE 1=1{run_scope}",  # noqa: S608  # nosec B608
                 params,
             ).fetchone()[0]
+            # nosemgrep: sqlalchemy-execute-raw-query  # literals only
             completed = connection.execute(
                 f"SELECT COUNT(*) FROM runs WHERE status='completed'{run_scope}",  # noqa: S608  # nosec B608
                 params,
             ).fetchone()[0]
+            # nosemgrep: sqlalchemy-execute-raw-query  # literals only
             failed = connection.execute(
                 f"SELECT COUNT(*) FROM runs WHERE status='failed'{run_scope}",  # noqa: S608  # nosec B608
                 params,
             ).fetchone()[0]
+            # nosemgrep: sqlalchemy-execute-raw-query  # literals only
             pending = connection.execute(
                 f"SELECT COUNT(*) FROM approvals WHERE status='pending'{approval_scope}",  # noqa: S608  # nosec B608
                 params,
             ).fetchone()[0]
+            # nosemgrep: sqlalchemy-execute-raw-query  # literals only
             avg_ms = connection.execute(
                 f"SELECT COALESCE(AVG(duration_ms),0) FROM spans WHERE 1=1{span_scope}",  # noqa: S608  # nosec B608
                 params,
             ).fetchone()[0]
+            # nosemgrep: sqlalchemy-execute-raw-query  # literals only
             usage = connection.execute(
                 f"""SELECT COALESCE(SUM(input_tokens),0),
                            COALESCE(SUM(output_tokens),0),COALESCE(SUM(cost_usd),0)
@@ -2149,9 +2143,7 @@ ACTUAL: {encode(actual)}""",
             "total_cost_usd": round(usage[2], 6),
         }
 
-    def trends(
-        self, limit: int = 30, project_ids: set[int] | None = None
-    ) -> list[dict[str, Any]]:
+    def trends(self, limit: int = 30, project_ids: set[int] | None = None) -> list[dict[str, Any]]:
         query = """SELECT r.id,r.status,r.started_at,
                           COALESCE(SUM(s.duration_ms),0) AS duration_ms,
                           COALESCE(SUM(s.cost_usd),0) AS cost_usd

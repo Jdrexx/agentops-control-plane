@@ -81,9 +81,7 @@ def test_anthropic_usage_is_parsed(monkeypatch):
 
 
 def test_ollama_eval_counts_are_parsed(monkeypatch):
-    body = json.dumps(
-        {"response": "local result", "prompt_eval_count": 6, "eval_count": 3}
-    )
+    body = json.dumps({"response": "local result", "prompt_eval_count": 6, "eval_count": 3})
     _monkeypatch_urlopen(monkeypatch, [Response(body)])
     result = ProviderRegistry().generate_detailed("ollama", "llama-test", "hello")
     assert result.text == "local result"
@@ -107,9 +105,7 @@ def test_retry_on_429_honors_retry_after(monkeypatch):
             "usage": {"prompt_tokens": 1, "completion_tokens": 1},
         }
     )
-    calls = _monkeypatch_urlopen(
-        monkeypatch, [_http_error(429, retry_after=0), Response(body)]
-    )
+    calls = _monkeypatch_urlopen(monkeypatch, [_http_error(429, retry_after=0), Response(body)])
     result = ProviderRegistry().generate("openai", "gpt-test", "hello")
     assert result == "recovered"
     assert calls["count"] == 2
@@ -120,9 +116,7 @@ def test_retry_on_5xx_then_succeeds(monkeypatch):
     body = json.dumps(
         {"content": [{"text": "ok"}], "usage": {"input_tokens": 1, "output_tokens": 1}}
     )
-    calls = _monkeypatch_urlopen(
-        monkeypatch, [_http_error(502), _http_error(503), Response(body)]
-    )
+    calls = _monkeypatch_urlopen(monkeypatch, [_http_error(502), _http_error(503), Response(body)])
     result = ProviderRegistry().generate("anthropic", "claude-test", "hi")
     assert result == "ok"
     assert calls["count"] == 3

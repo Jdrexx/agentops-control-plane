@@ -10,5 +10,7 @@
   overflow: auto;
   white-space: pre-wrap;
   color: var(--mint);
-  font: 13px/1.6 ui-monospace, monospace;
+  font:
+    13px/1.6 ui-monospace,
+    monospace;
 }

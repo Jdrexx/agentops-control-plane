@@ -20,7 +20,12 @@ def _pending_outbox(client: TestClient) -> list[dict]:
 
 
 def test_webhook_creation_rejects_private_targets(client: TestClient, project: dict):
-    for url in ("http://localhost/hook", "http://127.0.0.1/hook", "http://10.0.0.5/hook", "http://169.254.169.254/hook"):
+    for url in (
+        "http://localhost/hook",
+        "http://127.0.0.1/hook",
+        "http://10.0.0.5/hook",
+        "http://169.254.169.254/hook",
+    ):
         response = client.post(
             "/api/webhooks",
             json={"project_id": project["id"], "url": url, "events": ["run.completed"]},
@@ -30,8 +35,8 @@ def test_webhook_creation_rejects_private_targets(client: TestClient, project: d
 
 def test_run_completion_enqueues_and_delivers_webhook(client: TestClient, project: dict):
     captured = []
-    client.app.state.service._send_webhook = (
-        lambda url, payload, delivery_id=None: captured.append((url, payload, delivery_id))
+    client.app.state.service._send_webhook = lambda url, payload, delivery_id=None: captured.append(
+        (url, payload, delivery_id)
     )
     _create_webhook(client, project["id"], "https://8.8.8.8/hook")
     workflow = client.post(
@@ -92,7 +97,11 @@ def test_webhook_delivery_is_hmac_signed(client: TestClient, monkeypatch):
 
 def test_send_webhook_rejects_private_addresses(client: TestClient):
     service = client.app.state.service
-    for url in ("http://127.0.0.1/hook", "http://10.1.2.3/hook", "http://169.254.169.254/latest/meta-data"):
+    for url in (
+        "http://127.0.0.1/hook",
+        "http://10.1.2.3/hook",
+        "http://169.254.169.254/latest/meta-data",
+    ):
         try:
             service._send_webhook(url, {"event": "x"})
         except ValueError as error:
@@ -177,8 +186,8 @@ def test_slack_and_email_notifications_use_outbox(client: TestClient, project: d
 
 def test_outbox_claim_prevents_double_delivery(client: TestClient, project: dict):
     captured = []
-    client.app.state.service._send_webhook = (
-        lambda url, payload, delivery_id=None: captured.append(url)
+    client.app.state.service._send_webhook = lambda url, payload, delivery_id=None: captured.append(
+        url
     )
     _create_webhook(client, project["id"], "https://8.8.8.8/hook")
     workflow = client.post(
@@ -213,8 +222,8 @@ def test_outbox_claim_prevents_double_delivery(client: TestClient, project: dict
 
 def test_outbox_reclaims_expired_leases(client: TestClient, project: dict):
     captured = []
-    client.app.state.service._send_webhook = (
-        lambda url, payload, delivery_id=None: captured.append(url)
+    client.app.state.service._send_webhook = lambda url, payload, delivery_id=None: captured.append(
+        url
     )
     _create_webhook(client, project["id"], "https://8.8.8.8/hook")
     workflow = client.post(

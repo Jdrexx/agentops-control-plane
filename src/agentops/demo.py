@@ -81,11 +81,7 @@ def _find_project(service: Any, name: str) -> dict[str, Any] | None:
 
 
 def _workflow_named(service: Any, project_id: int, name: str) -> list[dict[str, Any]]:
-    return [
-        workflow
-        for workflow in service.list_workflows(project_id)
-        if workflow["name"] == name
-    ]
+    return [workflow for workflow in service.list_workflows(project_id) if workflow["name"] == name]
 
 
 def _latest_run(service: Any, workflow_id: int) -> dict[str, Any] | None:
