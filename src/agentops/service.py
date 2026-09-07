@@ -1838,6 +1838,7 @@ ACTUAL: {encode(actual)}""",
             method="POST",
         )
         try:
+            # nosemgrep -- webhook URL scheme+hostname allowlisted by _assert_public_webhook_url
             with urllib.request.urlopen(request, timeout=10):  # noqa: S310  # nosec B310
                 pass
         except (urllib.error.URLError, TimeoutError) as error:
@@ -2078,6 +2079,7 @@ ACTUAL: {encode(actual)}""",
             method="POST",
         )
         try:
+            # nosemgrep -- OTLP endpoint scheme allowlisted to http/https above
             with urllib.request.urlopen(request, timeout=10):  # noqa: S310  # nosec B310
                 pass
         except (urllib.error.URLError, TimeoutError):

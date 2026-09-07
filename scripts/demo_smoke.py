@@ -21,6 +21,7 @@ def request(path: str, *, method: str = "GET", body: dict | None = None):
         headers={"Content-Type": "application/json"},
     )
     try:
+        # nosemgrep -- BASE_URL is a fixed loopback constant; paths are internal literals
         with urllib.request.urlopen(req, timeout=10) as response:  # noqa: S310
             return json.load(response)
     except urllib.error.HTTPError as error:

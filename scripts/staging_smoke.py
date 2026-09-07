@@ -47,6 +47,7 @@ class ApiClient:
             },
         )
         try:
+            # nosemgrep -- base_url HTTPS-only, allowlisted in validate_target() before use
             with urllib.request.urlopen(  # noqa: S310  # nosec B310
                 request, timeout=self.timeout
             ) as response:
