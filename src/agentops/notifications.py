@@ -31,6 +31,7 @@ class Notifier:
             method="POST",
         )
         try:
+            # nosemgrep -- Slack URL scheme pinned to https by the check above
             with urllib.request.urlopen(request, timeout=10):  # noqa: S310  # nosec B310
                 pass
         except (urllib.error.URLError, TimeoutError) as error:

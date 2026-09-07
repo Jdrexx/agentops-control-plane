@@ -312,6 +312,7 @@ class ProviderRegistry:
                 method="POST",
             )
             try:
+                # nosemgrep -- provider URL scheme allowlisted to http/https above
                 with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310  # nosec B310
                     return json.loads(response.read())
             except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
@@ -343,6 +344,7 @@ class ProviderRegistry:
                 method="POST",
             )
             try:
+                # nosemgrep -- provider URL scheme allowlisted to http/https above
                 with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310  # nosec B310
                     for raw_line in response:
                         line = raw_line.decode().strip()
